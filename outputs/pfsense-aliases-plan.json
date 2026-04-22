@@ -1,0 +1,64 @@
+{
+  "aliases": [
+    {
+      "name": "ALIAS_WAZUH_SERVERS",
+      "type": "host",
+      "values": [
+        "10.2.161.191",
+        "10.2.161.141",
+        "10.2.161.195"
+      ],
+      "description": "All Wazuh server IPs"
+    },
+    {
+      "name": "ALIAS_DB_SERVERS",
+      "type": "host",
+      "values": [
+        "10.2.165.166",
+        "10.2.165.131",
+        "10.2.165.83"
+      ],
+      "description": "All DB server IPs"
+    },
+    {
+      "name": "ALIAS_BASTION_HOSTS",
+      "type": "host",
+      "values": [
+        "10.2.158.64"
+      ],
+      "description": "All bastion host IPs"
+    },
+    {
+      "name": "ALIAS_MGMT_NET",
+      "type": "network",
+      "values": [
+        "10.2.158.0/24"
+      ],
+      "description": "Management network CIDRs"
+    },
+    {
+      "name": "ALIAS_SOC_NET",
+      "type": "network",
+      "values": [
+        "10.2.161.0/24"
+      ],
+      "description": "SOC network CIDRs"
+    },
+    {
+      "name": "ALIAS_DATA_NET",
+      "type": "network",
+      "values": [
+        "10.2.165.0/24"
+      ],
+      "description": "Data network CIDRs"
+    },
+    {
+      "name": "ALIAS_TRANSIT_NET",
+      "type": "network",
+      "values": [
+        "10.2.104.0/24"
+      ],
+      "description": "Transit network CIDRs"
+    }
+  ]
+}

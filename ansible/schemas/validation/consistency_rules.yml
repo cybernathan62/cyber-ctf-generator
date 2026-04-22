@@ -1,0 +1,140 @@
+version: 1
+
+consistency_rules:
+
+  # =========================
+  # ZONES AND ROLES
+  # =========================
+
+  - name: roles_must_use_declared_zones
+    rule: "Every role default zone and every host policy zone must exist in infra/zone_catalog.yml"
+    severity: critical
+    description: "Aucun rôle ou host ne doit référencer une zone inconnue."
+
+  - name: zone_policies_must_match_zone_catalog
+    rule: "Every file in policies/zones must reference a zone declared in infra/zone_catalog.yml"
+    severity: critical
+    description: "Les policies de zone doivent correspondre au catalogue des zones."
+
+  - name: sensitive_roles_must_reside_in_sensitive_zones
+    rule: "db_server must be in db, ad_server must be in ad, backup_server must be in backup, wazuh_server and zabbix_server must be in soc"
+    severity: critical
+    description: "Les rôles critiques doivent être placés dans leur zone prévue."
+
+  # =========================
+  # SERVICES AND FLOWS
+  # =========================
+
+  - name: all_services_used_in_flows_must_exist
+    rule: "Every service referenced in flows, deny files and host policies must exist in services/service_catalog.yml"
+    severity: critical
+    description: "Aucun flow ne doit utiliser un service non déclaré."
+
+  - name: all_roles_used_in_flows_must_exist
+    rule: "Every src_role, src_roles, dst_role and dst_roles entry must exist in roles catalogs or host policies"
+    severity: critical
+    description: "Tous les rôles utilisés dans les flows doivent être connus."
+
+  - name: logical_aliases_must_be_declared
+    rule: "Every logical alias such as any_managed must be declared in validation/required_objects.yml or equivalent alias registry"
+    severity: high
+    description: "Les alias logiques doivent être explicitement enregistrés."
+
+  # =========================
+  # EXPOSURE CONSISTENCY
+  # =========================
+
+  - name: exposed_services_must_be_in_dmz
+    rule: "Any publicly exposed role must reside in dmz unless an explicit exception is declared"
+    severity: critical
+    description: "Par défaut, seuls les services en DMZ peuvent être exposés."
+
+  - name: sensitive_roles_must_not_be_exposed
+    rule: "db_server, ad_server, backup_server, wazuh_server and zabbix_server must never appear as normal public exposure targets"
+    severity: critical
+    description: "Les rôles sensibles ne doivent jamais être publiés."
+
+  - name: reverse_proxy_should_front_public_apps
+    rule: "If reverse_proxy exists, user and wan application access should terminate on reverse_proxy before app_server"
+    severity: high
+    description: "Le reverse proxy doit rester le point d’exposition principal."
+
+  # =========================
+  # ADMIN CONSISTENCY
+  # =========================
+
+  - name: admin_access_must_use_bastion
+    rule: "Administrative paths must originate from bastion or from admin_workstation to bastion only"
+    severity: critical
+    description: "Aucun chemin admin direct ne doit contourner le bastion."
+
+  - name: firewall_admin_must_be_restricted
+    rule: "edge_firewall and internal_firewall roles must accept admin only from bastion"
+    severity: critical
+    description: "Les firewalls ne doivent être administrés que via le bastion."
+
+  - name: soc_admin_must_be_restricted
+    rule: "Wazuh and Zabbix admin interfaces must be reachable only from bastion unless an explicit exception is declared"
+    severity: high
+    description: "Les interfaces SOC doivent rester protégées."
+
+  # =========================
+  # HA AND PLATFORM CONSISTENCY
+  # =========================
+
+  - name: ha_requires_interconnect
+    rule: "If pfsense_ha or firewall_cluster is enabled, interconnect zone and ha_sync_flows must exist"
+    severity: critical
+    description: "Le HA firewall exige un réseau interconnect et des flows de sync."
+
+  - name: cluster_policies_require_matching_roles
+    rule: "Platform policies must only apply to roles that actually exist in the topology"
+    severity: high
+    description: "On ne doit pas activer des platform policies sans rôles correspondants."
+
+  - name: multi_node_ad_requires_replication_policy
+    rule: "If more than one ad_server exists, ad_replication policy must be present"
+    severity: critical
+    description: "AD multi-nœuds sans policy de réplication est invalide."
+
+  - name: multi_node_db_requires_database_cluster_policy
+    rule: "If more than one db_server exists, database_cluster policy must be present"
+    severity: critical
+    description: "DB multi-nœuds sans policy cluster dédiée est invalide."
+
+  # =========================
+  # ROUTING CONSISTENCY
+  # =========================
+
+  - name: routing_must_follow_firewall_policy
+    rule: "Hosts must not define routes or gateways that bypass declared firewall roles"
+    severity: critical
+    description: "Aucun chemin réseau ne doit contourner les firewalls."
+
+  - name: transit_and_interconnect_must_not_host_business_services
+    rule: "No application, identity, backup or user service may be attached to transit or interconnect"
+    severity: critical
+    description: "Les réseaux techniques ne doivent pas porter de services métiers."
+
+  # =========================
+  # MONITORING CONSISTENCY
+  # =========================
+
+  - name: managed_nodes_must_be_monitored
+    rule: "Critical roles must have declared flows to monitoring and security platforms"
+    severity: high
+    description: "Les nœuds critiques doivent être supervisés."
+
+  - name: observability_stack_must_reside_in_soc
+    rule: "wazuh_server and zabbix_server must reside in soc zone"
+    severity: critical
+    description: "La pile d’observabilité doit rester en zone SOC."
+
+  # =========================
+  # VALIDATION META
+  # =========================
+
+  - name: mandatory_consistency_failures_block_generation
+    rule: "Any critical consistency violation must fail validation and block generation"
+    severity: critical
+    description: "Toute incohérence critique doit stopper la génération."

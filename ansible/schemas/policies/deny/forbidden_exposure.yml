@@ -1,0 +1,82 @@
+version: 1
+
+forbidden_exposure:
+
+  # =========================
+  # INTERDICTIONS DE PUBLICATION
+  # =========================
+
+  - name: no_direct_exposure_db
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - db_server
+    description: "La base de données ne doit jamais être exposée directement à Internet."
+
+  - name: no_direct_exposure_ad
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - ad_server
+    description: "Les services d'identité (AD, LDAP, DNS interne) ne doivent jamais être publiés."
+
+  - name: no_direct_exposure_backup
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - backup_server
+    description: "Les dépôts de sauvegarde et services de restauration ne doivent jamais être exposés."
+
+  - name: no_direct_exposure_soc
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - zabbix_server
+      - wazuh_server
+    description: "Les plateformes de supervision et de sécurité ne doivent pas être exposées."
+
+  - name: no_direct_exposure_firewall_internal
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - internal_firewall
+      - internal_firewall_cluster
+    description: "Le firewall interne ne doit jamais être accessible directement depuis Internet."
+
+  - name: no_exposure_critical_ports
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - any
+    services:
+      - mysql
+      - postgres
+      - ldap
+      - ldaps
+      - kerberos
+      - smb
+    description: "Les ports critiques (base de données, services d'annuaire) ne doivent jamais être exposés."
+
+  # =========================
+  # CONTRAINTES DE SÉCURITÉ
+  # =========================
+
+  - name: exposure_via_controlled_channel_only
+    action: enforce
+    requirement:
+      - public_services_must_use_controlled_exposure
+      - direct_exposure_of_internal_services: false
+    description: "Toute publication doit passer par un reverse proxy ou un NAT contrôlé et respecter les policies globales."
+
+  - name: no_nat_for_sensitive_services
+    action: enforce
+    requirement:
+      - no_direct_nat_on_sensitive_services
+    description: "Aucun NAT ne doit exposer des services sensibles comme l'AD, la DB, la sauvegarde ou le SOC."
+
+  - name: certificate_required_on_public_service
+    action: enforce
+    requirement:
+      - tls_termination
+      - certificate_management
+    description: "Les services publiés doivent utiliser TLS et des certificats valides."

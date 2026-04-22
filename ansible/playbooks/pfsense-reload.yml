@@ -1,0 +1,19 @@
+- name: Reload pfSense configuration
+  hosts: pfsense
+  gather_facts: false
+
+  tasks:
+    - name: Recharger config pfSense
+      raw: /etc/rc.reload_all
+
+    - name: Attendre stabilisation
+      pause:
+        seconds: 10
+
+    - name: Vérifier hostname
+      raw: sysctl kern.hostname
+      register: hostname_check
+
+    - name: Afficher hostname
+      debug:
+        var: hostname_check.stdout_lines

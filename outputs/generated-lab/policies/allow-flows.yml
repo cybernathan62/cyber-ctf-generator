@@ -1,0 +1,73 @@
+allowed_flows:
+  -
+    id: internet-to-dmz-https
+    fromZone: edge
+    toZone: dmz
+    ports:
+      - 80
+      - 443
+    protocol: tcp
+    rationale: "Controlled public exposure limited to reverse proxy/web entrypoint"
+  -
+    id: management-admin-dmz
+    fromZone: management
+    toZone: dmz
+    ports:
+      - 22
+      - 80
+      - 443
+    protocol: tcp
+    rationale: "Bastion administers DMZ services"
+  -
+    id: management-admin-data
+    fromZone: management
+    toZone: data
+    ports:
+      - 22
+      - 3306
+      - 5432
+    protocol: tcp
+    rationale: "Bastion administers database systems"
+  -
+    id: management-admin-soc
+    fromZone: management
+    toZone: soc
+    ports:
+      - 22
+      - 443
+      - 10050
+      - 10051
+      - 1514
+      - 1515
+      - 55000
+    protocol: tcp
+    rationale: "Bastion administers supervision and security tools"
+  -
+    id: dmz-to-data-app-db
+    fromZone: dmz
+    toZone: data
+    ports:
+      - 3306
+      - 5432
+    protocol: tcp
+    rationale: "Application/database communication only"
+  -
+    id: soc-to-dmz-monitor
+    fromZone: soc
+    toZone: dmz
+    ports:
+      - 80
+      - 443
+      - 10050
+    protocol: tcp
+    rationale: Monitoring
+  -
+    id: soc-to-data-monitor
+    fromZone: soc
+    toZone: data
+    ports:
+      - 22
+      - 10050
+      - 9100
+    protocol: tcp
+    rationale: Monitoring

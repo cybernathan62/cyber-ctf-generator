@@ -1,0 +1,37 @@
+networks:
+  -
+    id: net-edge-wan
+    name: edge-wan
+    zone: edge
+    cidr: 192.0.2.0/24
+    purpose: "External/WAN side for edge firewall nodes"
+  -
+    id: net-mgmt
+    name: management-net
+    zone: management
+    cidr: 10.10.10.0/24
+    purpose: "Bastion and administration zone"
+  -
+    id: net-dmz
+    name: dmz-net
+    zone: dmz
+    cidr: 10.10.30.0/24
+    purpose: "Publicly exposed reverse proxy zone"
+  -
+    id: net-data
+    name: data-net
+    zone: data
+    cidr: 10.10.60.0/24
+    purpose: "Protected database zone"
+  -
+    id: net-soc
+    name: soc-net
+    zone: soc
+    cidr: 10.10.70.0/24
+    purpose: "Wazuh and Zabbix supervision zone"
+  -
+    id: net-core-transit
+    name: core-transit-net
+    zone: transit
+    cidr: 10.10.200.0/29
+    purpose: "Transit between edge cluster and internal firewall"

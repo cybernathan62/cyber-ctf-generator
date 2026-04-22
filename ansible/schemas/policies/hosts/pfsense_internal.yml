@@ -1,0 +1,84 @@
+version: 1
+
+host_policy:
+
+  role: internal_firewall
+
+  description: "Firewall interne chargé d’isoler les zones sensibles et de contrôler les flux est-ouest."
+
+  zone_attachments:
+    - transit
+    - soc
+    - ad
+    - db
+    - backup
+    - users
+
+  sensitivity: critical
+  infrastructure_role: true
+
+  # =========================
+  # CORE FUNCTIONS
+  # =========================
+
+  allowed_functions:
+    - east_west_filtering
+    - zone_isolation
+    - protected_zone_routing
+    - selective_service_exposure
+    - logging
+
+  description_functions: "Le firewall interne protège les zones critiques et limite les mouvements latéraux."
+
+  # =========================
+  # MANAGEMENT
+  # =========================
+
+  admin_only_from:
+    - bastion
+
+  direct_admin_from_wan_forbidden: true
+  direct_admin_from_users_forbidden: true
+  direct_admin_from_dmz_forbidden: true
+
+  description_admin: "L’administration du firewall interne ne doit passer que par le bastion."
+
+  # =========================
+  # ROUTING
+  # =========================
+
+  controls_sensitive_zone_paths: true
+  may_route_between_protected_zones: true
+  direct_edge_to_sensitive_zone_bypass_forbidden: true
+
+  description_routing: "Les chemins vers AD, DB, backup et SOC doivent rester sous contrôle du firewall interne."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  east_west_controls_required: true
+  lateral_movement_reduction_required: true
+  unauthorized_internal_flows_must_be_blocked: true
+
+  description_security: "Le firewall interne applique la segmentation et réduit les possibilités de pivot interne."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  logging_required: true
+  monitoring_required: true
+  config_backup_required: true
+
+  description_monitoring: "Les événements et changements du firewall interne doivent être tracés et sauvegardés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_application_services: true
+  must_not_host_identity_services: true
+  must_not_host_backup_services: true
+
+  description_validation: "Le firewall interne ne doit pas héberger de services métiers."

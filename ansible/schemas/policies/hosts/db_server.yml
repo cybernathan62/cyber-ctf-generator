@@ -1,0 +1,100 @@
+version: 1
+
+host_policy:
+
+  role: db_server
+
+  description: "Serveur de base de données stockant les données applicatives critiques."
+
+  zone: db
+
+  sensitivity: critical
+  data_store: true
+
+  # =========================
+  # CORE FUNCTIONS
+  # =========================
+
+  allowed_functions:
+    - database_storage
+    - query_processing
+    - replication
+    - logging
+
+  description_functions: "Le serveur DB stocke et traite les données applicatives."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  accepts_connections_from:
+    - app_server
+    - bastion
+    - backup_server
+
+  may_connect_to:
+    - backup_server
+    - zabbix_server
+    - wazuh_server
+
+  description_access: "La base accepte uniquement les connexions applicatives, admin contrôlées et backup."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  direct_public_exposure_forbidden: true
+  direct_access_from_users_forbidden: true
+  strong_authentication_required: true
+  encryption_recommended: true
+
+  description_security: "La base ne doit jamais être exposée et doit être fortement protégée."
+
+  # =========================
+  # DATA PROTECTION
+  # =========================
+
+  sensitive_data_storage: true
+  access_must_be_restricted: true
+  data_encryption_recommended: true
+
+  description_data: "Les données sont critiques et doivent être protégées."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  may_not_initiate_connections_to_app: true
+  may_not_access_dmz: true
+  may_not_access_users: true
+  lateral_movement_forbidden: true
+
+  description_restrictions: "La base ne doit pas initier de flux vers d’autres zones applicatives."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  logging_required: true
+  monitoring_required: true
+  anomaly_detection_recommended: true
+
+  description_monitoring: "Les accès DB doivent être surveillés et analysés."
+
+  # =========================
+  # BACKUP
+  # =========================
+
+  backup_required: true
+  restore_capability_required: true
+
+  description_backup: "Les données doivent être sauvegardées et restaurables."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_application_logic: true
+  must_not_host_public_services: true
+
+  description_validation: "Le serveur DB ne doit pas héberger autre chose que la base."

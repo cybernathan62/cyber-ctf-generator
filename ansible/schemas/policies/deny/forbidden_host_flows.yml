@@ -1,0 +1,173 @@
+version: 1
+
+forbidden_host_flows:
+
+  # =========================
+  # DATABASE PROTECTION
+  # =========================
+
+  - name: non_app_to_db_denied
+    action: deny
+    src_roles:
+      - user_workstation
+      - reverse_proxy
+      - zabbix_server
+      - wazuh_server
+    dst_roles:
+      - db_server
+    description: "Seules les applications autorisées peuvent accéder à la base."
+
+  - name: db_to_other_servers_denied
+    action: deny
+    src_role: db_server
+    dst_roles:
+      - app_server
+      - reverse_proxy
+      - user_workstation
+    description: "La base ne doit pas initier de connexions vers les autres systèmes."
+
+  # =========================
+  # ACTIVE DIRECTORY PROTECTION
+  # =========================
+
+  - name: non_authorized_admin_to_ad_denied
+    action: deny
+    src_roles:
+      - user_workstation
+      - reverse_proxy
+      - app_server
+    dst_roles:
+      - ad_server
+    services:
+      - rdp
+      - winrm
+    description: "Seul le bastion peut administrer l’AD."
+
+  - name: ad_to_dmz_denied
+    action: deny
+    src_role: ad_server
+    dst_roles:
+      - reverse_proxy
+      - app_server
+    description: "L’AD ne doit pas initier de flux vers la DMZ."
+
+  # =========================
+  # BACKUP PROTECTION
+  # =========================
+
+  - name: backup_access_restricted
+    action: deny
+    src_roles:
+      - user_workstation
+      - reverse_proxy
+      - app_server
+      - db_server
+    dst_roles:
+      - backup_server
+    description: "Accès au backup strictement limité."
+
+  - name: backup_to_users_denied
+    action: deny
+    src_role: backup_server
+    dst_roles:
+      - user_workstation
+    description: "Le serveur de backup ne doit pas interagir avec les postes utilisateurs."
+
+  # =========================
+  # SOC PROTECTION
+  # =========================
+
+  - name: soc_admin_interfaces_restricted
+    action: deny
+    src_roles:
+      - user_workstation
+      - reverse_proxy
+      - app_server
+    dst_roles:
+      - wazuh_server
+      - zabbix_server
+    services:
+      - wazuh_api
+      - zabbix_web
+    description: "Accès aux interfaces SOC interdit hors bastion."
+
+  - name: soc_to_production_restricted
+    action: deny
+    src_roles:
+      - wazuh_server
+      - zabbix_server
+    dst_roles:
+      - db_server
+      - ad_server
+    description: "Les systèmes SOC ne doivent pas initier de flux vers les systèmes critiques."
+
+  # =========================
+  # FIREWALL PROTECTION
+  # =========================
+
+  - name: no_direct_access_to_firewalls
+    action: deny
+    src_roles:
+      - user_workstation
+      - reverse_proxy
+      - app_server
+    dst_roles:
+      - edge_firewall
+      - edge_firewall_cluster
+      - internal_firewall
+      - internal_firewall_cluster
+    description: "Seul le bastion peut accéder aux firewalls."
+
+  # =========================
+  # DMZ LATERAL MOVEMENT
+  # =========================
+
+  - name: dmz_lateral_denied
+    action: deny
+    src_role: reverse_proxy
+    dst_roles:
+      - app_server
+    services:
+      - ssh
+      - rdp
+    description: "Pas de mouvement latéral administratif dans la DMZ."
+
+  - name: app_lateral_denied
+    action: deny
+    src_role: app_server
+    dst_roles:
+      - reverse_proxy
+    services:
+      - ssh
+      - rdp
+    description: "Pas de flux administratif inverse dans la DMZ."
+
+  # =========================
+  # WORKSTATION HARDENING
+  # =========================
+
+  - name: workstation_to_infra_admin_denied
+    action: deny
+    src_role: user_workstation
+    dst_roles:
+      - edge_firewall
+      - internal_firewall
+      - ad_server
+      - db_server
+    services:
+      - ssh
+      - rdp
+      - winrm
+    description: "Les postes utilisateurs ne doivent pas administrer l’infrastructure."
+
+  # =========================
+  # CONTRAINTES
+  # =========================
+
+  - name: critical_roles_must_not_be_exposed
+    action: enforce
+    requirement:
+      - no_direct_access_to_firewalls
+      - database_must_be_isolated
+      - backup_must_be_isolated
+    description: "Les rôles critiques doivent rester isolés et non accessibles directement."

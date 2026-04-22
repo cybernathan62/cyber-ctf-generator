@@ -1,0 +1,83 @@
+version: 1
+
+zone_catalog:
+
+  wan:
+    role: external_untrusted_network
+    trust_level: untrusted
+    supports_public_exposure: false
+    allows_admin_hosts: false
+    allows_sensitive_data: false
+    description: "Réseau externe non maîtrisé, point d’entrée vers les services publiés."
+
+  mgmt:
+    role: administrative_zone
+    trust_level: high
+    supports_public_exposure: false
+    allows_admin_hosts: true
+    allows_sensitive_data: limited
+    description: "Zone d’administration contenant les bastions, postes d’admin et accès de gestion."
+
+  dmz:
+    role: controlled_exposure_zone
+    trust_level: medium
+    supports_public_exposure: true
+    allows_admin_hosts: false
+    allows_sensitive_data: false
+    description: "Zone d’exposition contrôlée pour reverse proxy, frontaux web et services publiés."
+
+  users:
+    role: user_access_zone
+    trust_level: medium
+    supports_public_exposure: false
+    allows_admin_hosts: false
+    allows_sensitive_data: false
+    description: "Zone des postes utilisateurs et équipements métiers non administratifs."
+
+  db:
+    role: protected_data_zone
+    trust_level: high
+    supports_public_exposure: false
+    allows_admin_hosts: false
+    allows_sensitive_data: true
+    description: "Zone dédiée aux bases de données, à la réplication et aux flux strictement applicatifs."
+
+  ad:
+    role: identity_and_core_services_zone
+    trust_level: high
+    supports_public_exposure: false
+    allows_admin_hosts: false
+    allows_sensitive_data: true
+    description: "Zone des services d’identité, annuaire, DNS interne, fichiers et services cœur."
+
+  soc:
+    role: observability_and_security_zone
+    trust_level: high
+    supports_public_exposure: false
+    allows_admin_hosts: false
+    allows_sensitive_data: true
+    description: "Zone de supervision, collecte de logs, détection, corrélation et tableaux de bord sécurité."
+
+  backup:
+    role: backup_and_recovery_zone
+    trust_level: high
+    supports_public_exposure: false
+    allows_admin_hosts: false
+    allows_sensitive_data: true
+    description: "Zone des sauvegardes, dépôts, réplication et restauration contrôlée."
+
+  transit:
+    role: routed_transit_zone
+    trust_level: restricted
+    supports_public_exposure: false
+    allows_admin_hosts: false
+    allows_sensitive_data: false
+    description: "Réseau de transit entre équipements de sécurité, routage ou segmentation intermédiaire."
+
+  interconnect:
+    role: infrastructure_sync_zone
+    trust_level: restricted
+    supports_public_exposure: false
+    allows_admin_hosts: false
+    allows_sensitive_data: false
+    description: "Réseau technique réservé aux synchronisations HA, cluster et communications d’infrastructure."

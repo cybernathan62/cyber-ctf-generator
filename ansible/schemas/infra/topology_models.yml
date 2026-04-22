@@ -1,0 +1,163 @@
+version: 1
+
+topology_models:
+
+  simple_single_zone:
+    description: "Petit lab monosegment avec un firewall unique et une seule zone interne."
+    firewall_mode: single
+    supports_ha: false
+    required_zones:
+      - wan
+      - users
+    optional_zones: []
+    required_components:
+      - edge_firewall
+    allowed_components:
+      - bastion
+      - workstation
+      - app_server
+    constraints:
+      multi_vm_segmentation_required: false
+      dedicated_admin_zone_required: false
+      dedicated_data_zone_required: false
+
+  segmented_multi_zone:
+    description: "Architecture segmentée standard avec zones dédiées et contrôle inter-zone par firewall."
+    firewall_mode: single
+    supports_ha: false
+    required_zones:
+      - wan
+      - mgmt
+      - dmz
+      - soc
+      - db
+      - ad
+    optional_zones:
+      - users
+      - backup
+      - transit
+      - interconnect
+    required_components:
+      - edge_firewall
+      - bastion
+    allowed_components:
+      - reverse_proxy
+      - app_server
+      - db_server
+      - ad_server
+      - wazuh_server
+      - zabbix_server
+      - backup_server
+      - workstation
+    constraints:
+      multi_vm_segmentation_required: true
+      dedicated_admin_zone_required: true
+      dedicated_data_zone_required: true
+
+  dual_firewall_segmented:
+    description: "Architecture segmentée avec firewall edge et firewall interne pour isoler les zones sensibles."
+    firewall_mode: dual
+    supports_ha: false
+    required_zones:
+      - wan
+      - mgmt
+      - dmz
+      - soc
+      - db
+      - ad
+      - transit
+    optional_zones:
+      - users
+      - backup
+      - interconnect
+    required_components:
+      - edge_firewall
+      - internal_firewall
+      - bastion
+    allowed_components:
+      - reverse_proxy
+      - app_server
+      - db_server
+      - ad_server
+      - wazuh_server
+      - zabbix_server
+      - backup_server
+      - workstation
+    constraints:
+      multi_vm_segmentation_required: true
+      dedicated_admin_zone_required: true
+      dedicated_data_zone_required: true
+      sensitive_zones_behind_internal_firewall: true
+
+  ha_edge_segmented:
+    description: "Architecture segmentée avec cluster HA en frontal et publication contrôlée des services."
+    firewall_mode: edge_ha
+    supports_ha: true
+    required_zones:
+      - wan
+      - mgmt
+      - dmz
+      - soc
+      - db
+      - ad
+      - transit
+      - interconnect
+    optional_zones:
+      - users
+      - backup
+    required_components:
+      - edge_firewall_cluster
+      - bastion
+    allowed_components:
+      - reverse_proxy
+      - app_server
+      - db_server
+      - ad_server
+      - wazuh_server
+      - zabbix_server
+      - backup_server
+      - workstation
+    constraints:
+      multi_vm_segmentation_required: true
+      dedicated_admin_zone_required: true
+      dedicated_data_zone_required: true
+      ha_sync_network_required: true
+      public_access_must_terminate_on_controlled_exposure: true
+
+  full_multi_tier_ha:
+    description: "Architecture complète avec firewall edge HA, firewall interne, zones sensibles dédiées et interconnexion technique."
+    firewall_mode: edge_ha_plus_internal
+    supports_ha: true
+    required_zones:
+      - wan
+      - mgmt
+      - dmz
+      - soc
+      - db
+      - ad
+      - transit
+      - interconnect
+    optional_zones:
+      - users
+      - backup
+    required_components:
+      - edge_firewall_cluster
+      - internal_firewall
+      - bastion
+    allowed_components:
+      - reverse_proxy
+      - app_server
+      - db_server
+      - ad_server
+      - wazuh_server
+      - zabbix_server
+      - backup_server
+      - workstation
+    constraints:
+      multi_vm_segmentation_required: true
+      dedicated_admin_zone_required: true
+      dedicated_data_zone_required: true
+      sensitive_zones_behind_internal_firewall: true
+      ha_sync_network_required: true
+      interconnect_required_for_platform_sync: true
+      east_west_controls_must_be_enforced: true

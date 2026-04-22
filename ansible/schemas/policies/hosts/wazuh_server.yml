@@ -1,0 +1,101 @@
+version: 1
+
+host_policy:
+
+  role: wazuh_server
+
+  description: "Plateforme de sécurité centralisant logs, événements, détection et tableaux de bord."
+
+  zone: soc
+
+  sensitivity: critical
+  security_core_system: true
+
+  # =========================
+  # CORE FUNCTIONS
+  # =========================
+
+  allowed_functions:
+    - log_collection
+    - event_correlation
+    - intrusion_detection
+    - agent_management
+    - security_dashboard
+    - logging
+
+  description_functions: "Wazuh centralise la visibilité sécurité et la gestion des agents."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  accepts_connections_from:
+    - app_server
+    - db_server
+    - ad_server
+    - backup_server
+    - reverse_proxy
+    - user_workstation
+    - edge_firewall
+    - edge_firewall_cluster
+    - internal_firewall
+    - internal_firewall_cluster
+    - bastion
+
+  may_connect_to:
+    - ad_server
+
+  description_access: "Wazuh reçoit logs et événements des systèmes gérés, et peut interroger l’AD si autorisé."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  direct_public_exposure_forbidden: true
+  admin_only_via_bastion: true
+  strong_authentication_required: true
+  privileged_access_protection_required: true
+
+  description_security: "L’interface et l’API Wazuh ne doivent jamais être exposées publiquement."
+
+  # =========================
+  # SECURITY ROLE
+  # =========================
+
+  central_security_platform: true
+  agent_enrollment_must_be_controlled: true
+  dashboard_access_must_be_controlled: true
+
+  description_role: "Wazuh supervise la sécurité et ne doit pas devenir un pivot d’administration."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  may_not_admin_firewalls: true
+  may_not_admin_ad: true
+  may_not_access_db_as_client: true
+  lateral_movement_restricted: true
+
+  description_restrictions: "Wazuh ne doit pas initier de flux non nécessaires vers les systèmes critiques."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  self_monitoring_required: true
+  logging_required: true
+  backup_required: true
+  security_alerting_required: true
+
+  description_monitoring: "La plateforme Wazuh doit être elle-même supervisée, journalisée et sauvegardée."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_public_services: true
+  must_not_host_backup_services: true
+  must_not_host_non_security_applications: true
+
+  description_validation: "Wazuh ne doit porter que des fonctions de sécurité."

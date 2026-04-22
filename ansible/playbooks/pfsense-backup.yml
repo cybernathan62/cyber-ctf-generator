@@ -1,0 +1,18 @@
+- name: Backup pfSense config
+  hosts: pfsense
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Ensure backup directory exists on controller
+      delegate_to: localhost
+      run_once: true
+      file:
+        path: /lab/Backup
+        state: directory
+
+    - name: Fetch pfSense config.xml
+      fetch:
+        src: /conf/config.xml
+        dest: /lab/Backup/config.xml
+        flat: yes

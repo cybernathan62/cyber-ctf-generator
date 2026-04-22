@@ -1,0 +1,106 @@
+version: 1
+
+security_roles:
+
+  zabbix_server:
+    description: "Serveur de supervision centralisé pour la collecte de métriques, états systèmes et alertes."
+    default_zone: soc
+    sensitivity: high
+    exposes_services:
+      - zabbix_server
+      - http
+      - https
+    consumes_services:
+      - dns
+      - ntp
+      - database_backend
+      - monitoring_agent
+      - logging
+    allowed_management_from:
+      - bastion
+    allowed_clients:
+      - app_server
+      - db_server
+      - ad_server
+      - backup_server
+      - wazuh_server
+      - workstation
+    required_capabilities:
+      - metrics_collection
+      - alerting
+      - dashboarding
+
+  wazuh_server:
+    description: "Plateforme de détection et réponse (SIEM/HIDS) pour collecte de logs, corrélation et alertes sécurité."
+    default_zone: soc
+    sensitivity: critical
+    exposes_services:
+      - wazuh_manager
+      - wazuh_api
+      - http
+      - https
+    consumes_services:
+      - dns
+      - ntp
+      - storage_backend
+      - monitoring_agent
+      - logging
+    allowed_management_from:
+      - bastion
+    allowed_agents:
+      - app_server
+      - db_server
+      - ad_server
+      - backup_server
+      - zabbix_server
+      - workstation
+    required_capabilities:
+      - log_collection
+      - security_event_correlation
+      - agent_management
+      - threat_detection
+
+  log_collector:
+    description: "Collecteur centralisé de logs (syslog, journaux applicatifs, événements réseau)."
+    default_zone: soc
+    sensitivity: high
+    exposes_services:
+      - syslog
+      - log_ingestion
+    consumes_services:
+      - storage_backend
+      - monitoring_agent
+    allowed_management_from:
+      - bastion
+    allowed_sources:
+      - edge_firewall
+      - internal_firewall
+      - app_server
+      - db_server
+      - ad_server
+      - workstation
+    required_capabilities:
+      - centralized_logging
+      - log_retention
+      - log_forwarding
+
+  siem_platform:
+    description: "Plateforme SIEM avancée pour corrélation multi-sources, détection avancée et investigation."
+    default_zone: soc
+    sensitivity: critical
+    exposes_services:
+      - siem_ui
+      - siem_api
+    consumes_services:
+      - log_collector
+      - storage_backend
+      - monitoring_agent
+    allowed_management_from:
+      - bastion
+    allowed_sources:
+      - wazuh_server
+      - log_collector
+    required_capabilities:
+      - correlation_engine
+      - threat_detection
+      - investigation_support

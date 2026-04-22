@@ -1,0 +1,123 @@
+version: 1
+
+ha_sync_flows:
+
+  # =========================
+  # PFSENSE HA
+  # =========================
+
+  - name: edge_firewall_ha_sync
+    action: allow
+    src_roles:
+      - edge_firewall_cluster
+    dst_roles:
+      - edge_firewall_cluster
+    services:
+      - pfsync
+      - carp
+      - config_sync
+    description: "Synchronisation HA entre firewalls edge (état, VIP, configuration)."
+
+  - name: internal_firewall_ha_sync
+    action: allow
+    src_roles:
+      - internal_firewall_cluster
+    dst_roles:
+      - internal_firewall_cluster
+    services:
+      - pfsync
+      - carp
+      - config_sync
+    description: "Synchronisation HA entre firewalls internes."
+
+  # =========================
+  # CLUSTER INFRA (GENERIC)
+  # =========================
+
+  - name: cluster_internal_sync
+    action: allow
+    src_roles:
+      - db_server
+      - ad_server
+      - wazuh_server
+      - zabbix_server
+    dst_roles:
+      - db_server
+      - ad_server
+      - wazuh_server
+      - zabbix_server
+    services:
+      - icmp
+      - ssh
+    description: "Flux internes nécessaires à la synchronisation et au maintien des clusters."
+
+  # =========================
+  # INTERCONNECT NETWORK
+  # =========================
+
+  - name: interconnect_restricted_usage
+    action: allow
+    src_zone: interconnect
+    dst_zone: interconnect
+    services:
+      - pfsync
+      - carp
+      - config_sync
+      - icmp
+    description: "Le réseau interconnect est réservé aux flux techniques de synchronisation."
+
+  # =========================
+  # RESTRICTIONS CRITIQUES
+  # =========================
+
+  - name: no_ha_sync_from_non_cluster
+    action: deny
+    src_roles:
+      - app_server
+      - reverse_proxy
+      - user_workstation
+      - backup_server
+    dst_roles:
+      - edge_firewall_cluster
+      - internal_firewall_cluster
+    description: "Aucun autre composant ne doit interagir avec les mécanismes HA."
+
+  - name: no_interconnect_access_from_other_zones
+    action: deny
+    src_zones:
+      - wan
+      - users
+      - dmz
+      - mgmt
+    dst_zone: interconnect
+    description: "Le réseau interconnect ne doit pas être accessible depuis les zones classiques."
+
+  - name: no_ha_services_exposed
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - edge_firewall_cluster
+      - internal_firewall_cluster
+    services:
+      - pfsync
+      - carp
+      - config_sync
+    description: "Les services HA ne doivent jamais être exposés."
+
+  # =========================
+  # CONTRAINTES
+  # =========================
+
+  - name: ha_requires_dedicated_network
+    action: enforce
+    requirement:
+      - ha_sync_network_required
+      - interconnect_required_for_platform_sync
+    description: "Le HA doit utiliser un réseau dédié et isolé."
+
+  - name: cluster_nodes_must_be_isolated
+    action: enforce
+    requirement:
+      - cluster_nodes_must_use_internal_sync
+      - no_public_access_to_all_cluster_nodes
+    description: "Les clusters doivent être isolés et non exposés directement."

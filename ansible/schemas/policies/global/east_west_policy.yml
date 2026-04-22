@@ -1,0 +1,89 @@
+version: 1
+
+east_west_policy:
+
+  # =========================
+  # PRINCIPES GENERAUX
+  # =========================
+
+  east_west_traffic_restricted: true
+  lateral_movement_protection_enabled: true
+  default_internal_deny: true
+
+  description: "Tout trafic interne doit être explicitement autorisé."
+
+  # =========================
+  # SEGMENTATION
+  # =========================
+
+  inter_zone_communication_requires_explicit_rules: true
+  intra_zone_communication_restricted: true
+
+  description_segmentation: "Même à l’intérieur d’une zone, les flux doivent être limités."
+
+  # =========================
+  # TRUST MODEL
+  # =========================
+
+  trust_model: zero_trust_internal
+
+  description_trust: "Aucun hôte n’est considéré comme sûr par défaut."
+
+  # =========================
+  # ROLE-BASED ACCESS
+  # =========================
+
+  role_based_communication_enforced: true
+  allow_only_required_role_flows: true
+
+  description_roles: "Les communications doivent être définies par rôle et besoin métier."
+
+  # =========================
+  # SENSITIVE ZONES
+  # =========================
+
+  protected_zones:
+    - db
+    - ad
+    - backup
+    - soc
+
+  extra_restrictions_on_sensitive_zones: true
+
+  description_sensitive: "Les zones sensibles ont des contrôles renforcés."
+
+  # =========================
+  # DMZ RULES
+  # =========================
+
+  dmz_cannot_initiate_internal_admin: true
+  dmz_lateral_movement_restricted: true
+
+  description_dmz: "La DMZ est considérée semi-compromise par défaut."
+
+  # =========================
+  # USERS RULES
+  # =========================
+
+  users_cannot_access_sensitive_zones_directly: true
+  users_must_go_through_controlled_paths: true
+
+  description_users: "Les utilisateurs doivent passer par des chemins validés (proxy, app, AD)."
+
+  # =========================
+  # DETECTION
+  # =========================
+
+  lateral_movement_detection_required: true
+  abnormal_internal_traffic_alerting: true
+
+  description_detection: "Les mouvements suspects doivent être détectés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  unauthorized_internal_flows_must_be_blocked: true
+  implicit_trust_forbidden: true
+
+  description_validation: "Aucun flux implicite ne doit exister."

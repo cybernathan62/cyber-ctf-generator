@@ -1,0 +1,59 @@
+version: 1
+
+workstation_roles:
+
+  user_workstation:
+    description: "Poste utilisateur standard utilisé pour les activités métier, accès aux applications et services internes."
+    default_zone: users
+    sensitivity: medium
+    exposes_services: []
+    consumes_services:
+      - dns
+      - ntp
+      - web_access
+      - identity_auth
+      - file_services
+      - monitoring_agent
+      - logging
+    allowed_management_from:
+      - bastion
+    allowed_destinations:
+      - reverse_proxy
+      - ad_server
+      - app_server
+      - zabbix_server
+      - wazuh_server
+    prohibited_destinations:
+      - db_server
+      - backup_server
+      - edge_firewall
+      - internal_firewall
+    required_capabilities:
+      - domain_join
+      - endpoint_protection
+      - user_activity_logging
+
+  admin_workstation:
+    description: "Poste dédié aux administrateurs, utilisé pour accéder au bastion et aux outils d’administration."
+    default_zone: mgmt
+    sensitivity: high
+    exposes_services: []
+    consumes_services:
+      - dns
+      - ntp
+      - identity_auth
+      - monitoring_agent
+      - logging
+    allowed_management_from: []
+    allowed_destinations:
+      - bastion
+    prohibited_destinations:
+      - db_server
+      - ad_server
+      - edge_firewall
+      - internal_firewall
+      - backup_server
+    required_capabilities:
+      - hardened_configuration
+      - privileged_access_control
+      - restricted_network_access

@@ -1,0 +1,64 @@
+version: 1
+
+zone_policy:
+
+  zone: mgmt
+
+  description: "Zone d’administration contenant bastion et postes admin."
+
+  trust_level: high
+  sensitivity: high
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  allowed_inbound_from:
+    - mgmt
+
+  allowed_outbound_to:
+    - dmz
+    - ad
+    - db
+    - backup
+    - soc
+    - transit
+    - interconnect
+
+  description_access: "La zone mgmt peut administrer les autres zones mais reste isolée."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  inbound_from_untrusted_zones_denied: true
+  direct_access_from_wan_forbidden: true
+
+  description_restrictions: "Aucun accès direct depuis WAN, users ou DMZ."
+
+  # =========================
+  # ADMIN ROLE
+  # =========================
+
+  is_admin_zone: true
+  bastion_required: true
+
+  description_admin: "Toutes les actions admin doivent partir de cette zone."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  monitoring_required: true
+  logging_required: true
+
+  description_monitoring: "Toutes les actions doivent être tracées."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_be_exposed: true
+  must_not_host_public_services: true
+
+  description_validation: "La zone mgmt ne doit jamais être exposée."

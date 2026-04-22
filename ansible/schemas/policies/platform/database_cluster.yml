@@ -1,0 +1,90 @@
+version: 1
+
+platform_policy:
+
+  name: database_cluster
+
+  description: "Policy spécifique aux clusters de bases de données avec cohérence stricte, réplication et protection renforcée."
+
+  applies_to_roles:
+    - db_server
+
+  # =========================
+  # CLUSTER MODEL
+  # =========================
+
+  cluster_type: database_redundancy_group
+  minimum_nodes: 1
+  recommended_minimum_nodes: 2
+
+  description_cluster: "Les bases peuvent être mono-nœud en lab simple, mais la redondance est recommandée."
+
+  # =========================
+  # DATA CONSISTENCY
+  # =========================
+
+  replication_required_if_multi_node: true
+  data_integrity_verification_required: true
+  split_brain_prevention_required: true
+
+  description_data: "La cohérence des données et la prévention des divergences sont obligatoires."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  application_access_must_remain_restricted: true
+  admin_access_only_via_bastion: true
+  direct_user_access_forbidden: true
+
+  description_access: "Même en cluster, les règles d’accès DB doivent rester strictes."
+
+  # =========================
+  # NETWORK
+  # =========================
+
+  cluster_sync_must_use_restricted_paths: true
+  cluster_nodes_must_share_same_zone: true
+  cluster_nodes_must_not_be_publicly_exposed: true
+
+  description_network: "Les communications internes DB doivent rester confinées et non exposées."
+
+  # =========================
+  # FAILOVER
+  # =========================
+
+  failover_supported: true
+  failover_must_preserve_data_integrity: true
+  failover_must_preserve_security_policy: true
+
+  description_failover: "La bascule ne doit ni corrompre les données ni affaiblir la sécurité."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  encryption_recommended: true
+  privileged_access_protection_required: true
+  unauthorized_replication_peers_forbidden: true
+
+  description_security: "Les pairs de réplication doivent être explicitement autorisés et protégés."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  replication_monitoring_required: true
+  query_anomaly_detection_recommended: true
+  alerting_required: true
+
+  description_monitoring: "Les états de réplication, les bascules et anomalies DB doivent être surveillés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  inconsistent_replication_topology_rejected: true
+  cluster_peers_must_be_explicitly_declared: true
+  mixed_database_roles_in_same_cluster_forbidden: true
+
+  description_validation: "La topologie DB doit être explicite, cohérente et validée."

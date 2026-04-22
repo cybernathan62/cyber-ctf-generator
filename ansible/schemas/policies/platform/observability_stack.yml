@@ -1,0 +1,92 @@
+version: 1
+
+platform_policy:
+
+  name: observability_stack
+
+  description: "Policy de pile d’observabilité pour supervision, logs, sécurité et corrélation centralisée."
+
+  applies_to_roles:
+    - zabbix_server
+    - wazuh_server
+
+  # =========================
+  # STACK MODEL
+  # =========================
+
+  centralized_observability_required: true
+  monitoring_and_security_stacks_must_be_declared: true
+  split_roles_allowed: true
+
+  description_stack: "La supervision technique et la visibilité sécurité doivent être centralisées et explicitement définies."
+
+  # =========================
+  # DATA COLLECTION
+  # =========================
+
+  all_managed_nodes_must_send_telemetry: true
+  metrics_collection_required: true
+  log_collection_required: true
+  security_event_collection_required: true
+
+  description_collection: "Tous les nœuds gérés doivent envoyer métriques, logs et événements de sécurité selon leur rôle."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  dashboard_access_only_via_bastion: true
+  api_access_must_be_controlled: true
+  direct_access_from_users_forbidden_by_default: true
+
+  description_access: "Les interfaces d’administration de la pile d’observabilité doivent être protégées."
+
+  # =========================
+  # NETWORK
+  # =========================
+
+  observability_stack_must_reside_in_soc_zone: true
+  public_exposure_forbidden: true
+  telemetry_paths_must_be_explicit: true
+
+  description_network: "La pile d’observabilité doit rester dans la zone SOC et ne jamais être exposée publiquement."
+
+  # =========================
+  # DATA RETENTION
+  # =========================
+
+  retention_policy_required: true
+  log_integrity_protection_required: true
+  storage_capacity_monitoring_required: true
+
+  description_retention: "La conservation, l’intégrité et la capacité de stockage doivent être suivies."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  privileged_access_protection_required: true
+  agent_enrollment_must_be_controlled: true
+  unauthorized_telemetry_sources_forbidden: true
+
+  description_security: "Les sources de télémétrie et l’accès privilégié doivent être strictement contrôlés."
+
+  # =========================
+  # RESILIENCE
+  # =========================
+
+  self_monitoring_required: true
+  backup_required: true
+  degraded_collection_alerting_required: true
+
+  description_resilience: "La plateforme doit être elle-même supervisée, sauvegardée et surveillée en cas de perte de collecte."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  unmanaged_nodes_without_observability_rejected: true
+  undeclared_dashboard_exposure_forbidden: true
+  inconsistent_soc_topology_rejected: true
+
+  description_validation: "Toute pile d’observabilité doit être cohérente, non exposée et couvrante."

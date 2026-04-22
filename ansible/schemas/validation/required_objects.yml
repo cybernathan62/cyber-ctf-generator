@@ -1,0 +1,153 @@
+version: 1
+
+required_objects:
+
+  # =========================
+  # GLOBAL REQUIRED OBJECTS
+  # =========================
+
+  mandatory_files:
+    - infra/design_principles.yml
+    - infra/zone_catalog.yml
+    - infra/network_defaults.yml
+    - infra/topology_models.yml
+    - infra/deployment_order.yml
+    - infra/environment_profiles.yml
+    - services/service_catalog.yml
+    - policies/global/default_security.yml
+
+  description_files: "Les fichiers fondateurs doivent exister avant toute génération ou validation."
+
+  # =========================
+  # REQUIRED ZONES
+  # =========================
+
+  mandatory_zones:
+    - wan
+    - mgmt
+    - dmz
+    - ad
+    - db
+    - soc
+
+  optional_zones:
+    - users
+    - backup
+    - transit
+    - interconnect
+
+  description_zones: "Les zones critiques doivent être présentes dans toute architecture segmentée."
+
+  # =========================
+  # REQUIRED ROLES
+  # =========================
+
+  mandatory_roles:
+    - bastion
+    - edge_firewall
+
+  required_when_segmented:
+    - reverse_proxy
+    - ad_server
+    - db_server
+    - wazuh_server
+    - zabbix_server
+
+  required_when_backup_enabled:
+    - backup_server
+
+  required_when_internal_segmentation_enabled:
+    - internal_firewall
+
+  description_roles: "Certains rôles sont toujours requis, d’autres dépendent du profil ou de la topologie."
+
+  # =========================
+  # REQUIRED SERVICES
+  # =========================
+
+  mandatory_services:
+    - dns
+    - ntp
+    - ssh
+    - https
+    - logging
+
+  required_when_identity_present:
+    - kerberos
+    - ldap
+    - ldaps
+
+  required_when_monitoring_present:
+    - zabbix_server
+    - wazuh_manager
+
+  description_services: "Les services clés doivent être définis dans le catalogue."
+
+  # =========================
+  # REQUIRED FLOWS
+  # =========================
+
+  mandatory_flow_sets:
+    - policies/flows/zone_to_zone.yml
+    - policies/flows/host_to_host.yml
+    - policies/flows/admin_flows.yml
+
+  required_when_applications_present:
+    - policies/flows/application_flows.yml
+
+  required_when_identity_present_flows:
+    - policies/flows/identity_flows.yml
+
+  required_when_monitoring_present_flows:
+    - policies/flows/monitoring_flows.yml
+
+  description_flows: "Les flux critiques doivent être explicitement modélisés."
+
+  # =========================
+  # REQUIRED DENY SETS
+  # =========================
+
+  mandatory_deny_sets:
+    - policies/deny/forbidden_zone_flows.yml
+    - policies/deny/forbidden_host_flows.yml
+    - policies/deny/forbidden_exposure.yml
+    - policies/deny/forbidden_admin_paths.yml
+
+  description_deny: "Les garde-fous critiques doivent toujours être présents."
+
+  # =========================
+  # REQUIRED PLATFORM POLICIES
+  # =========================
+
+  required_when_ha_enabled:
+    - policies/platform/pfsense_ha.yml
+    - policies/platform/firewall_cluster.yml
+
+  required_when_database_cluster_enabled:
+    - policies/platform/database_cluster.yml
+
+  required_when_ad_multi_node_enabled:
+    - policies/platform/ad_replication.yml
+
+  required_when_backup_replication_enabled:
+    - policies/platform/backup_replication.yml
+
+  description_platform: "Les fonctions avancées doivent obligatoirement avoir leur policy dédiée."
+
+  # =========================
+  # REQUIRED ALIASES / LOGICAL OBJECTS
+  # =========================
+
+  mandatory_logical_aliases:
+    - any_managed
+
+  description_aliases: "Les alias logiques utilisés dans les flows doivent être déclarés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  missing_mandatory_objects_must_fail_validation: true
+  undeclared_dependencies_must_fail_validation: true
+
+  description_validation: "Toute absence d’objet requis doit bloquer la validation."

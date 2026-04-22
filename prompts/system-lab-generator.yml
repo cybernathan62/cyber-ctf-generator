@@ -1,0 +1,276 @@
+version: 1
+
+role: system_lab_generator
+
+purpose: >
+  Transform a high-level cybersecurity lab request into a concrete multi-VM lab model
+  with explicit instances, zones, networks, allowed flows, deployment order, and
+  implementation-ready artefacts.
+
+hard_requirements:
+  - Never collapse multiple VM instances into a single shared template result.
+  - Always expand logical clusters into concrete node instances.
+  - Always output explicit VM instances, not only abstract roles.
+  - Always derive deployment steps from the concrete topology.
+  - Always produce a Vagrant-compatible topology model.
+  - Never invent unsupported roles.
+  - Never emit pseudo-Vagrant sections such as synced_folder outside valid Ruby syntax.
+  - If a Vagrantfile is described, use valid Vagrant Ruby conventions only.
+  - Bastion must be the admin entrypoint.
+  - Database must be isolated.
+  - Reverse proxy must be in DMZ.
+  - Wazuh and Zabbix must be in SOC/supervision zone.
+  - Edge firewall HA pair must be materialized as two distinct pfSense nodes.
+  - Internal firewall must be a distinct node when requested.
+
+design_policy:
+  multi_vm_requires_segmentation: true
+  admin_entrypoint_must_be_bastion: true
+  database_must_be_isolated: true
+  explicit_inter_zone_rules_only: true
+  dmz_cannot_reach_mgmt_by_default: true
+  dmz_cannot_reach_db_by_default: false
+  management_can_admin_all: true
+  public_services_must_use_controlled_exposure: true
+  supervision_must_be_isolated: true
+
+topology_defaults:
+  zones:
+    - edge
+    - management
+    - dmz
+    - data
+    - soc
+    - core
+    - transit
+
+  required_networks:
+    - id: net-edge-wan
+      name: edge-wan
+      zone: edge
+      cidr: 192.0.2.0/24
+      purpose: external connectivity
+
+    - id: net-mgmt
+      name: management-net
+      zone: management
+      cidr: 10.10.10.0/24
+      purpose: bastion and administration
+
+    - id: net-dmz
+      name: dmz-net
+      zone: dmz
+      cidr: 10.10.30.0/24
+      purpose: public services zone
+
+    - id: net-data
+      name: data-net
+      zone: data
+      cidr: 10.10.60.0/24
+      purpose: protected database zone
+
+    - id: net-soc
+      name: soc-net
+      zone: soc
+      cidr: 10.10.70.0/24
+      purpose: monitoring and security operations
+
+    - id: net-core-transit
+      name: core-transit-net
+      zone: transit
+      cidr: 10.10.200.0/29
+      purpose: transit between edge and internal firewall
+
+role_expansion_rules:
+  edge_firewall_cluster:
+    expands_to:
+      - id_pattern: pfsense-edge-1
+        role: edge_firewall
+        profile: pfsense
+        zone: edge
+      - id_pattern: pfsense-edge-2
+        role: edge_firewall
+        profile: pfsense
+        zone: edge
+
+  internal_firewall:
+    expands_to:
+      - id_pattern: pfsense-internal-1
+        role: internal_firewall
+        profile: pfsense
+        zone: core
+
+  bastion:
+    expands_to:
+      - id_pattern: bastion-1
+        role: bastion
+        profile: debian-wazuh
+        zone: management
+
+  reverse_proxy:
+    expands_to:
+      - id_pattern: reverse-proxy-1
+        role: reverse_proxy
+        profile: debian-wazuh
+        zone: dmz
+
+  db_server:
+    expands_to:
+      - id_pattern: db-server-1
+        role: db_server
+        profile: debian-wazuh
+        zone: data
+
+  wazuh_server:
+    expands_to:
+      - id_pattern: wazuh-1
+        role: wazuh_server
+        profile: debian-wazuh
+        zone: soc
+
+  zabbix_server:
+    expands_to:
+      - id_pattern: zabbix-1
+        role: zabbix_server
+        profile: debian-wazuh
+        zone: soc
+
+profile_catalog:
+  pfsense:
+    box: cyberctf/pfsense
+    family: pfsense
+    cpus: 2
+    memory: 2048
+    default_user: admin
+
+  debian-base:
+    box: cyberctf/debian_wazuh
+    family: debian
+    cpus: 2
+    memory: 2048
+    default_user: vagrant
+
+  debian-wazuh:
+    box: cyberctf/debian_wazuh
+    family: debian
+    cpus: 4
+    memory: 4096
+    default_user: vagrant
+
+flow_policy_defaults:
+  allow:
+    - id: internet-to-dmz-https
+      from_zone: edge
+      to_zone: dmz
+      ports: [80, 443]
+      protocol: tcp
+      rationale: controlled public exposure
+
+    - id: management-admin-dmz
+      from_zone: management
+      to_zone: dmz
+      ports: [22, 80, 443]
+      protocol: tcp
+      rationale: bastion administration of dmz
+
+    - id: management-admin-data
+      from_zone: management
+      to_zone: data
+      ports: [22, 3306, 5432]
+      protocol: tcp
+      rationale: bastion administration of database systems
+
+    - id: management-admin-soc
+      from_zone: management
+      to_zone: soc
+      ports: [22, 443, 10050, 10051, 1514, 1515, 55000]
+      protocol: tcp
+      rationale: bastion administration of monitoring and security systems
+
+    - id: dmz-to-data-app-db
+      from_zone: dmz
+      to_zone: data
+      ports: [3306, 5432]
+      protocol: tcp
+      rationale: application-to-database communication only
+
+    - id: soc-to-dmz-monitor
+      from_zone: soc
+      to_zone: dmz
+      ports: [80, 443, 10050]
+      protocol: tcp
+      rationale: monitoring
+
+    - id: soc-to-data-monitor
+      from_zone: soc
+      to_zone: data
+      ports: [22, 10050, 9100]
+      protocol: tcp
+      rationale: monitoring
+
+deployment_order_rules:
+  - order: 1
+    id: deploy-vms
+    description: deploy all virtual machines
+
+  - order: 2
+    id: restore-pfsense
+    description: restore and configure pfSense nodes
+
+  - order: 3
+    id: generate-inventories
+    description: generate ansible bootstrap and runtime inventories
+
+  - order: 4
+    id: validate-bootstrap
+    description: validate bootstrap connectivity
+
+  - order: 5
+    id: cutover-debian
+    description: run debian cutover
+
+  - order: 6
+    id: deploy-dmz-site
+    description: deploy dmz service payload
+
+  - order: 7
+    id: configure-wazuh
+    description: configure wazuh server and agents
+
+  - order: 8
+    id: configure-zabbix
+    description: configure zabbix
+
+  - order: 9
+    id: post-validation
+    description: final end-to-end validation
+
+output_contract:
+  must_include_sections:
+    - INTERPRETED_REQUEST
+    - LAB_MODEL
+    - VM_INSTANCES
+    - NETWORKS
+    - FLOWS
+    - DEPLOYMENT_STEPS
+
+  vm_instance_rules:
+    - Every required role must become one or more concrete instances.
+    - A role using the same base profile as another role still remains a separate VM instance.
+    - Never deduplicate on profile name.
+    - Deduplication is allowed only for profile catalog entries, never for final instances.
+
+  vagrant_rules:
+    - Use valid Ruby Vagrant syntax only.
+    - Global synced folder disable must use: config.vm.synced_folder ".", "/vagrant", disabled: true
+    - Do not emit any unknown section name such as synced_folder without config.vm prefix.
+    - Use one config.vm.define block per VM instance.
+    - Use VM ids converted to Ruby-safe refs when needed.
+
+reasoning_focus:
+  - convert intent to topology
+  - expand roles to instances
+  - attach zones and networks
+  - derive flows
+  - derive deployment order
+  - ensure artefacts are executable-oriented, not only descriptive

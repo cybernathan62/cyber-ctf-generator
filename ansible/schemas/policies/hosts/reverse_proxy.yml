@@ -1,0 +1,89 @@
+version: 1
+
+host_policy:
+
+  role: reverse_proxy
+
+  description: "Point de publication contrôlée des services web exposés."
+
+  zone: dmz
+
+  sensitivity: high
+  internet_facing: true
+
+  # =========================
+  # CORE FUNCTIONS
+  # =========================
+
+  allowed_functions:
+    - tls_termination
+    - request_forwarding
+    - controlled_publication
+    - request_filtering
+    - logging
+
+  description_functions: "Le reverse proxy reçoit les flux publics et les relaie vers les backends autorisés."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  accepts_connections_from:
+    - wan
+    - user_workstation
+    - bastion
+
+  may_connect_to:
+    - app_server
+
+  description_access: "Le reverse proxy reçoit les flux publiés et ne doit joindre que les applications autorisées."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  hardened_required: true
+  direct_db_access_forbidden: true
+  direct_backup_access_forbidden: true
+  direct_identity_admin_forbidden: true
+
+  description_security: "Le reverse proxy doit être durci et ne jamais servir de pivot vers les zones sensibles."
+
+  # =========================
+  # EXPOSURE
+  # =========================
+
+  public_exposure_allowed: true
+  controlled_exposure_only: true
+  tls_required_for_public_services: true
+
+  description_exposure: "Le reverse proxy est le point d’exposition public privilégié."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  may_not_admin_internal_systems: true
+  lateral_admin_movement_forbidden: true
+
+  description_restrictions: "Le reverse proxy ne doit pas initier de flux administratifs vers l’interne."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  logging_required: true
+  monitoring_required: true
+  security_alerting_required: true
+
+  description_monitoring: "Les accès et erreurs du reverse proxy doivent être surveillés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_sensitive_data: true
+  must_not_host_identity_services: true
+  must_not_host_backup_services: true
+
+  description_validation: "Le reverse proxy ne doit pas porter de données ou services sensibles."

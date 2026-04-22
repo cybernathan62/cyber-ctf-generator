@@ -1,0 +1,65 @@
+version: 1
+
+zone_policy:
+
+  zone: dmz
+
+  description: "Zone d’exposition contrôlée pour reverse proxy, frontaux web et services publiés."
+
+  trust_level: medium
+  sensitivity: medium
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  allowed_inbound_from:
+    - wan
+    - users
+    - mgmt
+
+  allowed_outbound_to:
+    - ad
+    - db
+    - soc
+
+  description_access: "La DMZ reçoit les flux publiés et ne peut sortir que vers les services strictement nécessaires."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  cannot_initiate_admin_to_internal: true
+  lateral_movement_restricted: true
+  direct_access_to_backup_forbidden: true
+  direct_access_to_mgmt_forbidden: true
+
+  description_restrictions: "La DMZ est considérée semi-compromise par défaut et doit rester fortement contrainte."
+
+  # =========================
+  # EXPOSURE
+  # =========================
+
+  public_exposure_allowed: true
+  controlled_exposure_required: true
+  reverse_proxy_preferred: true
+
+  description_exposure: "Seuls des services explicitement publiés peuvent être exposés depuis cette zone."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  monitoring_required: true
+  logging_required: true
+
+  description_monitoring: "Tous les systèmes DMZ doivent être supervisés et journalisés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_sensitive_data: true
+  must_not_host_identity_services: true
+
+  description_validation: "La DMZ ne doit pas héberger de données sensibles ni de services d’identité."

@@ -1,0 +1,170 @@
+version: 1
+
+host_to_host_flows:
+
+  # =========================
+  # ADMINISTRATION
+  # =========================
+
+  - name: bastion_to_firewalls
+    action: allow
+    src_role: bastion
+    dst_roles:
+      - edge_firewall
+      - edge_firewall_cluster
+      - internal_firewall
+      - internal_firewall_cluster
+    services:
+      - ssh
+      - https
+    description: "Le bastion administre tous les firewalls."
+
+  - name: bastion_to_servers
+    action: allow
+    src_role: bastion
+    dst_roles:
+      - reverse_proxy
+      - app_server
+      - db_server
+      - ad_server
+      - backup_server
+      - zabbix_server
+      - wazuh_server
+    services:
+      - ssh
+      - rdp
+      - winrm
+    description: "Le bastion administre tous les serveurs."
+
+  # =========================
+  # UTILISATEURS
+  # =========================
+
+  - name: workstation_to_reverse_proxy
+    action: allow
+    src_role: user_workstation
+    dst_roles:
+      - reverse_proxy
+    services:
+      - http
+      - https
+    description: "Les utilisateurs accèdent aux services exposés via le reverse proxy."
+
+  - name: workstation_to_ad
+    action: allow
+    src_role: user_workstation
+    dst_roles:
+      - ad_server
+    services:
+      - dns
+      - kerberos
+      - ldap
+      - ldaps
+      - smb
+    description: "Les postes utilisateurs consomment les services AD."
+
+  # =========================
+  # APPLICATION
+  # =========================
+
+  - name: reverse_proxy_to_app
+    action: allow
+    src_role: reverse_proxy
+    dst_roles:
+      - app_server
+    services:
+      - http
+      - https
+    description: "Le reverse proxy transmet les requêtes vers les serveurs applicatifs."
+
+  - name: app_to_db
+    action: allow
+    src_role: app_server
+    dst_roles:
+      - db_server
+    services:
+      - mysql
+      - postgres
+    description: "Les applications accèdent aux bases de données."
+
+  - name: app_to_ad
+    action: allow
+    src_role: app_server
+    dst_roles:
+      - ad_server
+    services:
+      - kerberos
+      - ldap
+      - ldaps
+    description: "Les applications utilisent l’authentification centralisée."
+
+  # =========================
+  # SUPERVISION / SOC
+  # =========================
+
+  - name: servers_to_zabbix
+    action: allow
+    src_roles:
+      - app_server
+      - db_server
+      - ad_server
+      - backup_server
+      - reverse_proxy
+    dst_roles:
+      - zabbix_server
+    services:
+      - zabbix_agent
+    description: "Les serveurs envoient leurs métriques à Zabbix."
+
+  - name: servers_to_wazuh
+    action: allow
+    src_roles:
+      - app_server
+      - db_server
+      - ad_server
+      - backup_server
+      - reverse_proxy
+      - user_workstation
+    dst_roles:
+      - wazuh_server
+    services:
+      - wazuh_manager
+      - wazuh_api
+    description: "Les agents envoient leurs logs et événements à Wazuh."
+
+  # =========================
+  # BACKUP
+  # =========================
+
+  - name: backup_to_servers
+    action: allow
+    src_role: backup_server
+    dst_roles:
+      - db_server
+      - ad_server
+      - app_server
+      - wazuh_server
+      - zabbix_server
+    services:
+      - ssh
+      - rsync
+      - backup_repo
+    description: "Le serveur de backup collecte les données."
+
+  # =========================
+  # FIREWALL HA / INFRA
+  # =========================
+
+  - name: firewall_ha_sync
+    action: allow
+    src_roles:
+      - edge_firewall_cluster
+      - internal_firewall_cluster
+    dst_roles:
+      - edge_firewall_cluster
+      - internal_firewall_cluster
+    services:
+      - pfsync
+      - carp
+      - config_sync
+    description: "Synchronisation HA entre firewalls."

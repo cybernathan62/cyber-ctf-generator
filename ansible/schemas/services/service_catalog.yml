@@ -1,0 +1,214 @@
+version: 1
+
+service_catalog:
+
+  # =========================
+  # Core network services
+  # =========================
+
+  dns:
+    protocol: tcp_udp
+    ports: [53]
+    description: "Résolution DNS"
+
+  ntp:
+    protocol: udp
+    ports: [123]
+    description: "Synchronisation temps"
+
+  icmp:
+    protocol: icmp
+    ports: []
+    description: "Diagnostic réseau (ping)"
+
+  # =========================
+  # Web / exposure
+  # =========================
+
+  http:
+    protocol: tcp
+    ports: [80]
+    description: "HTTP"
+
+  https:
+    protocol: tcp
+    ports: [443]
+    description: "HTTPS"
+
+  web_access:
+    protocol: tcp
+    ports: [80, 443]
+    description: "Navigation web"
+
+  backend_https:
+    protocol: tcp
+    ports: [443]
+    description: "Communication backend sécurisée"
+
+  # =========================
+  # Administration
+  # =========================
+
+  ssh:
+    protocol: tcp
+    ports: [22]
+    description: "Administration Linux / réseau"
+
+  rdp:
+    protocol: tcp
+    ports: [3389]
+    description: "Administration Windows"
+
+  winrm:
+    protocol: tcp
+    ports: [5985, 5986]
+    description: "Administration Windows distante"
+
+  # =========================
+  # Identity / AD
+  # =========================
+
+  kerberos:
+    protocol: tcp_udp
+    ports: [88]
+    description: "Authentification Kerberos"
+
+  ldap:
+    protocol: tcp
+    ports: [389]
+    description: "LDAP"
+
+  ldaps:
+    protocol: tcp
+    ports: [636]
+    description: "LDAP sécurisé"
+
+  smb:
+    protocol: tcp
+    ports: [445]
+    description: "Partage fichiers Windows"
+
+  identity_auth:
+    protocol: logical
+    ports: []
+    description: "Authentification centralisée (AD)"
+
+  file_services:
+    protocol: tcp
+    ports: [445]
+    description: "Accès fichiers réseau"
+
+  # =========================
+  # Database
+  # =========================
+
+  mysql:
+    protocol: tcp
+    ports: [3306]
+    description: "MySQL / MariaDB"
+
+  postgres:
+    protocol: tcp
+    ports: [5432]
+    description: "PostgreSQL"
+
+  db_access:
+    protocol: logical
+    ports: []
+    description: "Accès logique aux bases"
+
+  # =========================
+  # Monitoring / SOC
+  # =========================
+
+  zabbix_server:
+    protocol: tcp
+    ports: [10051]
+    description: "Zabbix server"
+
+  zabbix_agent:
+    protocol: tcp
+    ports: [10050]
+    description: "Zabbix agent"
+
+  zabbix_web:
+    protocol: tcp
+    ports: [8080]
+    description: "Interface web Zabbix"
+
+  wazuh_manager:
+    protocol: tcp
+    ports: [1514, 1515]
+    description: "Wazuh manager"
+
+  wazuh_api:
+    protocol: tcp
+    ports: [55000]
+    description: "API Wazuh"
+
+  wazuh_dashboard:
+    protocol: tcp
+    ports: [443]
+    description: "Dashboard Wazuh"
+
+  monitoring_agent:
+    protocol: logical
+    ports: []
+    description: "Agent de monitoring"
+
+  logging:
+    protocol: tcp_udp
+    ports: [514]
+    description: "Syslog"
+
+  # =========================
+  # Backup
+  # =========================
+
+  backup_repo:
+    protocol: tcp
+    ports: [873]
+    description: "Dépôt de sauvegarde"
+
+  rsync:
+    protocol: tcp
+    ports: [873]
+    description: "Rsync"
+
+  backup_agent:
+    protocol: logical
+    ports: []
+    description: "Agent de sauvegarde"
+
+  # =========================
+  # Application
+  # =========================
+
+  app_api:
+    protocol: tcp
+    ports: [8080]
+    description: "API applicative"
+
+  # =========================
+  # Firewall / HA / Infra
+  # =========================
+
+  pfsync:
+    protocol: raw
+    ports: []
+    description: "Sync état firewall"
+
+  carp:
+    protocol: raw
+    ports: []
+    description: "Virtual IP failover"
+
+  config_sync:
+    protocol: tcp
+    ports: [443]
+    description: "Synchronisation config firewall"
+
+  vpn:
+    protocol: tcp_udp
+    ports: []
+    description: "VPN (générique)"

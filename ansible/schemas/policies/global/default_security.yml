@@ -1,0 +1,70 @@
+version: 1
+
+default_security:
+
+  # =========================
+  # DEFAULT BEHAVIOR
+  # =========================
+
+  default_action: deny
+  stateful_firewalling: true
+  implicit_allow_established: true
+
+  description: "Tout trafic est bloqué par défaut. Seuls les flux explicitement autorisés sont permis."
+
+  # =========================
+  # RULE PRIORITY MODEL
+  # =========================
+
+  rule_evaluation_order:
+    - explicit_deny
+    - explicit_allow
+    - implicit_deny
+
+  description_priority: "Les règles deny explicites ont priorité sur les allow. Ensuite, deny implicite."
+
+  # =========================
+  # LOGGING
+  # =========================
+
+  log_denied_traffic: true
+  log_allowed_sensitive_flows: true
+  log_admin_actions: true
+
+  description_logging: "Les flux bloqués et sensibles doivent être journalisés."
+
+  # =========================
+  # ZONE ISOLATION
+  # =========================
+
+  inter_zone_traffic_requires_explicit_rule: true
+  intra_zone_traffic_allowed_by_default: true
+
+  description_zones: "Aucun flux inter-zone n’est autorisé sans règle explicite."
+
+  # =========================
+  # ANTI-SPOOFING
+  # =========================
+
+  anti_spoofing_enabled: true
+  block_invalid_source_addresses: true
+
+  description_antispoof: "Les adresses source incohérentes ou invalides doivent être bloquées."
+
+  # =========================
+  # NETWORK HYGIENE
+  # =========================
+
+  block_unused_ports: true
+  restrict_outbound_traffic: true
+  enforce_least_privilege: true
+
+  description_hygiene: "Seuls les services nécessaires doivent être autorisés."
+
+  # =========================
+  # FAIL-SAFE
+  # =========================
+
+  fail_closed_on_error: true
+
+  description_fail_safe: "En cas d’erreur ou de doute, le trafic doit être bloqué."

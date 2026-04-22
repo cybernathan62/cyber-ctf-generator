@@ -1,0 +1,138 @@
+version: 1
+
+backup_flows:
+
+  # =========================
+  # BACKUP COLLECTION
+  # =========================
+
+  - name: backup_to_db
+    action: allow
+    src_role: backup_server
+    dst_roles:
+      - db_server
+    services:
+      - ssh
+      - rsync
+      - backup_repo
+    description: "Le serveur de backup collecte les données des bases."
+
+  - name: backup_to_ad
+    action: allow
+    src_role: backup_server
+    dst_roles:
+      - ad_server
+    services:
+      - ssh
+      - rsync
+      - smb
+      - backup_repo
+    description: "Le serveur de backup collecte les données et services liés à l’AD."
+
+  - name: backup_to_app
+    action: allow
+    src_role: backup_server
+    dst_roles:
+      - app_server
+      - reverse_proxy
+    services:
+      - ssh
+      - rsync
+      - backup_repo
+    description: "Le serveur de backup collecte les données applicatives et frontales."
+
+  - name: backup_to_soc
+    action: allow
+    src_role: backup_server
+    dst_roles:
+      - wazuh_server
+      - zabbix_server
+    services:
+      - ssh
+      - rsync
+      - backup_repo
+    description: "Le serveur de backup collecte les données de supervision et de sécurité."
+
+  # =========================
+  # RESTORE PATHS
+  # =========================
+
+  - name: restore_to_protected_hosts
+    action: allow
+    src_role: backup_server
+    dst_roles:
+      - db_server
+      - ad_server
+      - app_server
+      - reverse_proxy
+      - wazuh_server
+      - zabbix_server
+    services:
+      - ssh
+      - rsync
+      - smb
+    description: "Le serveur de backup peut restaurer des données vers les systèmes protégés."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  - name: protected_hosts_to_backup_denied
+    action: deny
+    src_roles:
+      - db_server
+      - ad_server
+      - app_server
+      - reverse_proxy
+      - wazuh_server
+      - zabbix_server
+      - user_workstation
+    dst_roles:
+      - backup_server
+    services:
+      - ssh
+      - rsync
+      - backup_repo
+      - smb
+    description: "Les hôtes protégés et les utilisateurs ne doivent pas initier librement des connexions vers le backup."
+
+  - name: backup_not_exposed_to_users
+    action: deny
+    src_role: user_workstation
+    dst_roles:
+      - backup_server
+    description: "Les utilisateurs ne doivent jamais accéder directement au serveur de backup."
+
+  - name: backup_not_exposed_to_dmz
+    action: deny
+    src_roles:
+      - reverse_proxy
+      - app_server
+    dst_roles:
+      - backup_server
+    description: "La DMZ ne doit pas accéder librement au serveur de backup."
+
+  - name: backup_not_exposed_to_wan
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - backup_server
+    description: "Le serveur de backup ne doit jamais être exposé à Internet."
+
+  # =========================
+  # CONTRAINTES
+  # =========================
+
+  - name: backup_must_be_isolated
+    action: enforce
+    requirement:
+      - backup_must_be_isolated
+      - backup_must_not_be_directly_exposed
+    description: "Le backup doit rester isolé et non exposé."
+
+  - name: restore_must_be_controlled
+    action: enforce
+    requirement:
+      - restore_workflows
+      - retention_control
+    description: "Les restaurations doivent être contrôlées et traçables."

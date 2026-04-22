@@ -1,0 +1,91 @@
+version: 1
+
+host_policy:
+
+  role: app_server
+
+  description: "Serveur applicatif fournissant la logique métier et consommant éventuellement des services d’identité et de base de données."
+
+  zone: dmz
+
+  sensitivity: high
+  business_service_host: true
+
+  # =========================
+  # CORE FUNCTIONS
+  # =========================
+
+  allowed_functions:
+    - application_processing
+    - api_serving
+    - backend_connectivity
+    - logging
+
+  description_functions: "Le serveur applicatif traite les requêtes métiers et dialogue avec les services backend autorisés."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  accepts_connections_from:
+    - reverse_proxy
+    - bastion
+
+  may_connect_to:
+    - db_server
+    - ad_server
+    - zabbix_server
+    - wazuh_server
+
+  description_access: "Le serveur applicatif reçoit les flux via le reverse proxy et peut joindre uniquement les backends nécessaires."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  direct_public_exposure_forbidden_by_default: true
+  direct_admin_to_internal_forbidden: true
+  local_secrets_storage_minimized: true
+  strong_service_authentication_required: true
+
+  description_security: "Le serveur applicatif ne doit pas devenir un pivot vers l’interne ni exposer directement ses interfaces sensibles."
+
+  # =========================
+  # DATA ACCESS
+  # =========================
+
+  may_access_databases: true
+  database_access_must_be_restricted: true
+  identity_access_must_be_restricted: true
+
+  description_data: "L’accès aux bases et à l’identité doit être limité au strict nécessaire."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  may_not_admin_firewalls: true
+  may_not_admin_ad: true
+  may_not_access_backup_directly: true
+  lateral_admin_movement_forbidden: true
+
+  description_restrictions: "Le serveur applicatif ne doit pas administrer d’autres composants ni accéder librement aux zones sensibles."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  logging_required: true
+  monitoring_required: true
+  security_alerting_required: true
+
+  description_monitoring: "Les événements applicatifs et système doivent être supervisés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_identity_services: true
+  must_not_host_backup_services: true
+
+  description_validation: "Le serveur applicatif ne doit porter que des fonctions applicatives et leurs dépendances immédiates."

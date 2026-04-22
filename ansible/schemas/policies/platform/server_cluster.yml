@@ -1,0 +1,98 @@
+version: 1
+
+platform_policy:
+
+  name: server_cluster
+
+  description: "Policy générique pour clusters de serveurs assurant redondance, cohérence et disponibilité des services."
+
+  applies_to_roles:
+    - app_server
+    - db_server
+    - ad_server
+    - wazuh_server
+    - zabbix_server
+
+  # =========================
+  # CLUSTER MODEL
+  # =========================
+
+  cluster_type: scalable_group
+  minimum_nodes: 1
+  recommended_minimum_nodes: 2
+
+  description_cluster: "Les clusters serveurs peuvent être mono-nœud ou multi-nœuds avec haute disponibilité recommandée."
+
+  # =========================
+  # ROLE CONSISTENCY
+  # =========================
+
+  all_nodes_must_share_same_role: true
+  role_mixing_forbidden: true
+
+  description_roles: "Chaque cluster doit être homogène en termes de rôle."
+
+  # =========================
+  # CONFIGURATION CONSISTENCY
+  # =========================
+
+  configuration_must_be_consistent: true
+  configuration_drift_detection_required: true
+
+  description_config: "Les configurations doivent rester alignées entre les nœuds."
+
+  # =========================
+  # NETWORK CONSISTENCY
+  # =========================
+
+  zone_attachment_must_be_consistent: true
+  network_policies_must_be_consistent: true
+
+  description_network: "Les règles réseau doivent être identiques pour tous les membres."
+
+  # =========================
+  # DATA CONSISTENCY
+  # =========================
+
+  data_replication_required_if_multi_node: true
+  data_integrity_verification_required: true
+
+  description_data: "Les clusters doivent garantir la cohérence des données."
+
+  # =========================
+  # FAILOVER
+  # =========================
+
+  failover_supported: true
+  failover_must_not_break_security: true
+
+  description_failover: "Les mécanismes de bascule ne doivent pas modifier les règles de sécurité."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  cluster_internal_communication_restricted: true
+  cluster_nodes_must_not_be_exposed_individually: true
+
+  description_security: "Les nœuds ne doivent pas être exposés directement individuellement."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  health_check_required: true
+  replication_monitoring_required: true
+  alerting_required: true
+
+  description_monitoring: "Les clusters doivent être surveillés pour disponibilité et cohérence."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  inconsistent_cluster_members_forbidden: true
+  mixed_roles_in_cluster_forbidden: true
+  invalid_cluster_topology_rejected: true
+
+  description_validation: "Les clusters doivent être cohérents et valides."

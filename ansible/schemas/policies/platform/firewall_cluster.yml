@@ -1,0 +1,91 @@
+version: 1
+
+platform_policy:
+
+  name: firewall_cluster
+
+  description: "Policy de cluster pour firewalls redondés assurant segmentation, cohérence de rôle et continuité de service."
+
+  applies_to_roles:
+    - edge_firewall_cluster
+    - internal_firewall_cluster
+
+  # =========================
+  # CLUSTER MODEL
+  # =========================
+
+  cluster_type: redundant_pair
+  minimum_nodes: 2
+  odd_node_quorum_not_required: true
+
+  description_cluster: "Le cluster firewall repose sur une paire redondée active/passive."
+
+  # =========================
+  # ROLE CONSISTENCY
+  # =========================
+
+  all_nodes_must_share_same_role: true
+  all_nodes_must_share_same_zone_attachments: true
+  all_nodes_must_share_same_security_baseline: true
+
+  description_roles: "Les nœuds d’un même cluster doivent porter exactement les mêmes rôles et attachements."
+
+  # =========================
+  # INTERFACE CONSISTENCY
+  # =========================
+
+  interface_layout_must_be_consistent: true
+  vlan_membership_must_be_consistent: true
+  routing_policy_must_be_consistent: true
+
+  description_interfaces: "La topologie réseau et les interfaces doivent être cohérentes entre les nœuds du cluster."
+
+  # =========================
+  # STATE AND CONFIGURATION
+  # =========================
+
+  state_sync_required: true
+  config_sync_required: true
+  configuration_drift_forbidden: true
+
+  description_state: "Aucune dérive de configuration ne doit exister entre les membres du cluster."
+
+  # =========================
+  # FAILOVER
+  # =========================
+
+  failover_required: true
+  failover_must_preserve_security_policy: true
+  failover_must_preserve_routing_paths: true
+
+  description_failover: "La bascule ne doit pas modifier la posture de sécurité ni casser le routage."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  cluster_membership_must_be_explicit: true
+  unauthorized_cluster_nodes_forbidden: true
+  cluster_admin_only_from_bastion: true
+
+  description_security: "Seuls les nœuds explicitement déclarés peuvent rejoindre le cluster."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  failover_alerting_required: true
+  configuration_change_alerting_required: true
+  node_health_monitoring_required: true
+
+  description_monitoring: "Les changements, états et bascules doivent être surveillés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  all_members_must_pass_consistency_checks: true
+  split_policy_between_members_forbidden: true
+  inconsistent_zone_attachment_forbidden: true
+
+  description_validation: "Tout cluster incohérent doit être rejeté par validation."

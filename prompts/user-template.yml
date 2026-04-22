@@ -1,0 +1,9 @@
+request:
+  lab_name: ""
+  topology: ""
+  required_roles: []
+  optional_roles: []
+  constraints: []
+  exposure_requirements: []
+  high_availability: false
+  notes: ""

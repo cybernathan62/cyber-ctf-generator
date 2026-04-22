@@ -1,0 +1,52 @@
+version: 1
+
+network_defaults:
+
+  wan:
+    addressing: dhcp
+    description: "Accès externe amont des firewalls."
+
+  mgmt:
+    subnet: 10.1.10.0/24
+    gateway: 10.1.10.1
+    description: "Administration, bastion, accès de gestion."
+
+  dmz:
+    subnet: 10.1.30.0/24
+    gateway: 10.1.30.1
+    description: "Services exposés et reverse proxy."
+
+  users:
+    subnet: 10.1.40.0/24
+    gateway: 10.1.40.1
+    description: "Postes utilisateurs et segments métiers."
+
+  soc:
+    subnet: 10.2.50.0/24
+    gateway: 10.2.50.1
+    description: "Supervision, SIEM, logs, détection."
+
+  ad:
+    subnet: 10.3.60.0/24
+    gateway: 10.3.60.1
+    description: "AD, DNS interne, fichiers, services coeur."
+
+  db:
+    subnet: 10.3.70.0/24
+    gateway: 10.3.70.1
+    description: "Bases de données et réplication."
+
+  backup:
+    subnet: 10.3.80.0/24
+    gateway: 10.3.80.1
+    description: "Sauvegarde, dépôts, restauration."
+
+  transit:
+    subnet: 10.10.200.0/30
+    gateway: 10.10.200.1
+    description: "Transit routé entre équipements."
+
+  interconnect:
+    subnet: 10.20.200.0/30
+    gateway: 10.20.200.1
+    description: "Sync HA, cluster, interconnexion technique."

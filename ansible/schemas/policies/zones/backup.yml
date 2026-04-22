@@ -1,0 +1,74 @@
+version: 1
+
+zone_policy:
+
+  zone: backup
+
+  description: "Zone des sauvegardes, dépôts, restauration et réplication contrôlée."
+
+  trust_level: high
+  sensitivity: critical
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  allowed_inbound_from:
+    - mgmt
+
+  allowed_outbound_to:
+    - db
+    - ad
+    - dmz
+    - soc
+
+  description_access: "La zone backup initie les sauvegardes et restaurations vers les systèmes protégés."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  direct_access_from_users_forbidden: true
+  direct_access_from_dmz_forbidden: true
+  direct_access_from_wan_forbidden: true
+  inbound_backup_access_restricted: true
+
+  description_restrictions: "Le backup doit rester isolé et ne pas être accessible librement depuis les autres zones."
+
+  # =========================
+  # BACKUP ROLE
+  # =========================
+
+  hosts_backup_services: true
+  hosts_restore_services: true
+  retention_control_required: true
+
+  description_role: "La zone backup centralise les dépôts, les restaurations et la rétention."
+
+  # =========================
+  # PROTECTION
+  # =========================
+
+  immutable_backup_recommended: true
+  encryption_recommended: true
+  access_must_be_authenticated: true
+
+  description_protection: "Les sauvegardes doivent être protégées contre l’altération et l’accès non autorisé."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  monitoring_required: true
+  logging_required: true
+
+  description_monitoring: "Les systèmes de backup doivent être supervisés et journalisés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_be_exposed: true
+  must_not_host_public_services: true
+
+  description_validation: "La zone backup ne doit jamais être exposée directement."

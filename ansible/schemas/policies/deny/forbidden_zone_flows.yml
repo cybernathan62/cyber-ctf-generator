@@ -1,0 +1,139 @@
+version: 1
+
+forbidden_zone_flows:
+
+  # =========================
+  # WAN (INTERNET)
+  # =========================
+
+  - name: wan_to_internal_zones_denied
+    action: deny
+    src_zone: wan
+    dst_zones:
+      - mgmt
+      - ad
+      - db
+      - backup
+      - soc
+      - transit
+      - interconnect
+    description: "Internet ne doit jamais accéder directement aux zones internes."
+
+  # =========================
+  # DMZ RESTRICTIONS
+  # =========================
+
+  - name: dmz_to_mgmt_denied
+    action: deny
+    src_zone: dmz
+    dst_zones:
+      - mgmt
+    description: "La DMZ ne doit jamais accéder à la zone d’administration."
+
+  - name: dmz_to_db_denied_default
+    action: deny
+    src_zone: dmz
+    dst_zones:
+      - db
+    description: "Accès DMZ vers DB interdit sauf exception explicitement autorisée (via flows applicatifs)."
+
+  - name: dmz_to_backup_denied
+    action: deny
+    src_zone: dmz
+    dst_zones:
+      - backup
+    description: "La DMZ ne doit jamais accéder au backup."
+
+  # =========================
+  # USERS RESTRICTIONS
+  # =========================
+
+  - name: users_to_db_denied
+    action: deny
+    src_zone: users
+    dst_zones:
+      - db
+    description: "Les utilisateurs ne doivent jamais accéder directement aux bases."
+
+  - name: users_to_backup_denied
+    action: deny
+    src_zone: users
+    dst_zones:
+      - backup
+    description: "Les utilisateurs ne doivent pas accéder aux systèmes de backup."
+
+  - name: users_to_firewall_denied
+    action: deny
+    src_zone: users
+    dst_zones:
+      - transit
+      - interconnect
+    description: "Les utilisateurs ne doivent pas interagir avec les réseaux techniques."
+
+  # =========================
+  # SOC / SECURITY
+  # =========================
+
+  - name: non_admin_to_soc_restricted
+    action: deny
+    src_zones:
+      - users
+      - dmz
+    dst_zones:
+      - soc
+    description: "Accès direct aux systèmes SOC interdit hors flux explicitement autorisés."
+
+  # =========================
+  # BACKUP ISOLATION
+  # =========================
+
+  - name: non_backup_to_backup_denied
+    action: deny
+    src_zones:
+      - users
+      - dmz
+      - ad
+      - db
+    dst_zones:
+      - backup
+    description: "Le backup doit rester isolé des autres zones."
+
+  # =========================
+  # INTERCONNECT PROTECTION
+  # =========================
+
+  - name: non_infra_to_interconnect_denied
+    action: deny
+    src_zones:
+      - wan
+      - users
+      - dmz
+      - mgmt
+    dst_zones:
+      - interconnect
+    description: "Le réseau interconnect est réservé aux flux techniques uniquement."
+
+  # =========================
+  # TRANSIT PROTECTION
+  # =========================
+
+  - name: uncontrolled_transit_usage_denied
+    action: deny
+    src_zones:
+      - users
+      - dmz
+    dst_zones:
+      - transit
+    description: "Le réseau de transit ne doit pas être utilisé par les zones non techniques."
+
+  # =========================
+  # CONTRAINTES
+  # =========================
+
+  - name: sensitive_zones_must_remain_isolated
+    action: enforce
+    requirement:
+      - database_must_be_isolated
+      - backup_must_be_isolated
+      - ad_must_not_be_exposed_to_dmz
+    description: "Les zones sensibles doivent rester isolées par design."

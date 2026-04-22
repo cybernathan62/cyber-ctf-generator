@@ -1,0 +1,93 @@
+version: 1
+
+host_policy:
+
+  role: backup_server
+
+  description: "Serveur de sauvegarde chargé de la collecte, du stockage et de la restauration des données."
+
+  zone: backup
+
+  sensitivity: critical
+  data_protection_system: true
+
+  # =========================
+  # CORE FUNCTIONS
+  # =========================
+
+  allowed_functions:
+    - backup_collection
+    - data_storage
+    - restore_operations
+    - replication
+    - logging
+
+  description_functions: "Le serveur de backup centralise les sauvegardes et les restaurations."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  accepts_connections_from:
+    - bastion
+
+  may_connect_to:
+    - db_server
+    - ad_server
+    - app_server
+    - reverse_proxy
+    - wazuh_server
+    - zabbix_server
+
+  description_access: "Le backup initie les connexions vers les systèmes pour sauvegarde et restauration."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  direct_public_exposure_forbidden: true
+  direct_access_from_users_forbidden: true
+  direct_access_from_dmz_forbidden: true
+  strong_authentication_required: true
+
+  description_security: "Le serveur de backup doit être fortement isolé et protégé."
+
+  # =========================
+  # DATA PROTECTION
+  # =========================
+
+  stores_sensitive_data: true
+  immutable_backup_recommended: true
+  encryption_recommended: true
+  strict_access_control_required: true
+
+  description_data: "Les données de sauvegarde sont critiques et doivent être protégées contre altération et accès."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  may_not_be_accessed_directly_by_clients: true
+  may_not_initiate_uncontrolled_connections: true
+  lateral_movement_restricted: true
+
+  description_restrictions: "Les accès au backup doivent être strictement contrôlés."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  logging_required: true
+  monitoring_required: true
+  alerting_required: true
+
+  description_monitoring: "Les opérations de backup et restore doivent être surveillées."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_application_services: true
+  must_not_host_public_services: true
+
+  description_validation: "Le serveur de backup ne doit porter que des fonctions de sauvegarde."

@@ -1,0 +1,75 @@
+version: 1
+
+zone_policy:
+
+  zone: db
+
+  description: "Zone des bases de données et des services de stockage applicatif."
+
+  trust_level: high
+  sensitivity: critical
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  allowed_inbound_from:
+    - mgmt
+    - dmz
+    - backup
+
+  allowed_outbound_to:
+    - backup
+    - soc
+
+  description_access: "Les bases ne sont accessibles que par les applications, le bastion et le backup."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  direct_access_from_users_forbidden: true
+  direct_access_from_wan_forbidden: true
+  direct_access_from_soc_forbidden: true
+  lateral_movement_restricted: true
+
+  description_restrictions: "Les bases doivent être fortement isolées et ne pas être accessibles directement."
+
+  # =========================
+  # DATA PROTECTION
+  # =========================
+
+  hosts_sensitive_data: true
+  encryption_recommended: true
+  access_must_be_authenticated: true
+
+  description_data: "Les données stockées sont critiques et doivent être protégées."
+
+  # =========================
+  # DEPENDENCIES
+  # =========================
+
+  requires_backup: true
+  requires_monitoring: true
+  requires_logging: true
+
+  description_dependencies: "Les bases doivent être sauvegardées et supervisées."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  monitoring_required: true
+  logging_required: true
+  anomaly_detection_recommended: true
+
+  description_monitoring: "Les accès aux bases doivent être surveillés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_be_exposed: true
+  must_not_host_public_services: true
+
+  description_validation: "La zone DB ne doit jamais être exposée directement."

@@ -1,0 +1,100 @@
+version: 1
+
+host_policy:
+
+  role: bastion
+
+  description: "Point d’accès centralisé pour toutes les opérations d’administration."
+
+  zone: mgmt
+
+  sensitivity: critical
+  privileged_access_system: true
+
+  # =========================
+  # CORE FUNCTIONS
+  # =========================
+
+  allowed_functions:
+    - privileged_access_gateway
+    - ssh_jump_host
+    - rdp_jump_host
+    - session_control
+    - logging
+
+  description_functions: "Le bastion est le seul point d’entrée pour l’administration de l’infrastructure."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  accepts_connections_from:
+    - admin_workstation
+
+  may_connect_to:
+    - edge_firewall
+    - edge_firewall_cluster
+    - internal_firewall
+    - internal_firewall_cluster
+    - ad_server
+    - db_server
+    - app_server
+    - reverse_proxy
+    - backup_server
+    - wazuh_server
+    - zabbix_server
+
+  description_access: "Le bastion reçoit les connexions admin et accède à tous les systèmes."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  multi_factor_authentication_required: true
+  strong_authentication_required: true
+  session_logging_required: true
+  session_recording_recommended: true
+  idle_timeout_required: true
+
+  description_security: "Les accès au bastion doivent être fortement sécurisés et tracés."
+
+  # =========================
+  # EXPOSURE
+  # =========================
+
+  may_be_exposed: true
+  exposure_must_be_restricted: true
+  exposure_requires:
+    - ip_whitelisting
+    - strong_authentication
+    - monitoring
+
+  description_exposure: "Le bastion peut être exposé mais uniquement de manière très contrôlée."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  direct_access_from_users_forbidden: true
+  direct_access_from_dmz_forbidden: true
+
+  description_restrictions: "Seuls les postes admin doivent accéder au bastion."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  logging_required: true
+  monitoring_required: true
+  alerting_required: true
+
+  description_monitoring: "Toutes les actions sur le bastion doivent être surveillées."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_application_services: true
+  must_not_host_database: true
+
+  description_validation: "Le bastion ne doit servir qu’à l’administration."

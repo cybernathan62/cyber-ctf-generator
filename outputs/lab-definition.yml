@@ -1,0 +1,28 @@
+topology_intent: Edge HA firewall pair with segmented multi-zone architecture and strict inter-zone controls
+
+required_roles:
+  - edge_firewall_cluster
+  - internal_firewall
+  - bastion
+  - reverse_proxy
+  - db_server
+  - wazuh_server
+  - zabbix_server
+
+optional_roles: []
+
+services:
+  - ssh
+  - https
+  - dns
+  - ntp
+  - monitoring
+
+constraints:
+  - segmentation_required
+  - dedicated_admin_zone_required
+  - dedicated_data_zone_required
+  - ha_sync_network_required
+  - public_access_must_terminate_on_controlled_exposure
+  - dmz_cannot_reach_db_by_default
+  - admin_entrypoint_must_be_bastion

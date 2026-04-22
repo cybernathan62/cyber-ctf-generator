@@ -1,0 +1,68 @@
+version: 1
+
+zone_policy:
+
+  zone: soc
+
+  description: "Zone de supervision, journalisation, détection et tableaux de bord sécurité."
+
+  trust_level: high
+  sensitivity: critical
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  allowed_inbound_from:
+    - mgmt
+    - users
+    - dmz
+    - ad
+    - db
+    - backup
+    - transit
+
+  allowed_outbound_to:
+    - ad
+
+  description_access: "La zone SOC reçoit les métriques, logs et événements de toutes les zones gérées."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  direct_access_from_wan_forbidden: true
+  direct_access_from_users_forbidden_except_declared_flows: true
+  admin_only_via_bastion: true
+  lateral_movement_restricted: true
+
+  description_restrictions: "Les interfaces SOC ne doivent pas être exposées ni accessibles librement."
+
+  # =========================
+  # SOC ROLE
+  # =========================
+
+  hosts_monitoring_services: true
+  hosts_security_services: true
+  central_collection_required: true
+
+  description_role: "La zone SOC centralise supervision, logs et détection."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  self_monitoring_required: true
+  logging_required: true
+  backup_required: true
+
+  description_monitoring: "Les outils SOC doivent eux-mêmes être supervisés, journalisés et sauvegardés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_be_exposed: true
+  must_not_host_public_services: true
+
+  description_validation: "La zone SOC ne doit jamais publier de services publics."

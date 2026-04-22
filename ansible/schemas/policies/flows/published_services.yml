@@ -1,0 +1,117 @@
+version: 1
+
+published_services:
+
+  # =========================
+  # PUBLIC ENTRY POINT
+  # =========================
+
+  - name: wan_to_reverse_proxy_https
+    action: allow
+    src_zone: wan
+    dst_roles:
+      - reverse_proxy
+    services:
+      - https
+    description: "Accès public HTTPS vers le reverse proxy."
+
+  - name: wan_to_reverse_proxy_http_optional
+    action: allow
+    src_zone: wan
+    dst_roles:
+      - reverse_proxy
+    services:
+      - http
+    description: "Accès HTTP optionnel (souvent redirigé vers HTTPS)."
+
+  # =========================
+  # NAT / PORT FORWARD (OPTION)
+  # =========================
+
+  - name: wan_to_app_direct_nat_restricted
+    action: allow
+    src_zone: wan
+    dst_roles:
+      - app_server
+    services:
+      - https
+    conditions:
+      - explicit_exposure_required
+      - no_reverse_proxy_available
+    description: "Exposition directe exceptionnelle d’un service applicatif via NAT."
+
+  # =========================
+  # ADMIN EXPOSURE (STRICT)
+  # =========================
+
+  - name: wan_to_bastion_admin_restricted
+    action: allow
+    src_zone: wan
+    dst_roles:
+      - bastion
+    services:
+      - ssh
+      - https
+    conditions:
+      - restricted_source_ip
+      - hardened_access
+    description: "Accès admin externe strictement contrôlé (IP whitelist, MFA, etc)."
+
+  # =========================
+  # RESTRICTIONS CRITIQUES
+  # =========================
+
+  - name: no_direct_wan_to_db
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - db_server
+    description: "Aucune exposition directe des bases de données."
+
+  - name: no_direct_wan_to_ad
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - ad_server
+    description: "Aucune exposition directe des services d’identité."
+
+  - name: no_direct_wan_to_backup
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - backup_server
+    description: "Le backup ne doit jamais être exposé."
+
+  - name: no_direct_wan_to_soc
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - wazuh_server
+      - zabbix_server
+    description: "Les systèmes SOC ne doivent jamais être exposés."
+
+  - name: no_direct_wan_to_internal_firewall
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - internal_firewall
+      - internal_firewall_cluster
+    description: "Le firewall interne ne doit jamais être accessible depuis Internet."
+
+  # =========================
+  # CONTRAINTES
+  # =========================
+
+  - name: exposure_must_be_controlled
+    action: enforce
+    requirement:
+      - public_services_must_use_controlled_exposure
+      - direct_exposure_of_internal_services: false
+    description: "Toute exposition doit être contrôlée via proxy ou règles explicites."
+
+  - name: tls_required_for_public_services
+    action: enforce
+    requirement:
+      - tls_termination
+      - secure_cipher_configuration
+    description: "Les services publics doivent être sécurisés (HTTPS/TLS)."

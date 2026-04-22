@@ -1,0 +1,51 @@
+version: 1
+
+deployment_order:
+
+  - step: 1
+    name: topology_foundation
+    description: "Créer la topologie de base, les réseaux, les segments et les objets d’infrastructure."
+
+  - step: 2
+    name: firewall_layer
+    description: "Déployer les firewalls edge, internes et leurs interfaces réseau."
+
+  - step: 3
+    name: ha_and_platform_sync
+    description: "Configurer la haute disponibilité, les réseaux de synchronisation et les mécanismes de cluster d’infrastructure."
+
+  - step: 4
+    name: administration_layer
+    description: "Déployer la zone d’administration, le bastion et les accès de gestion."
+
+  - step: 5
+    name: core_services
+    description: "Déployer les services cœur comme identité, DNS interne, annuaire et services de base."
+
+  - step: 6
+    name: security_and_observability
+    description: "Déployer la supervision, la centralisation des logs, la détection et les tableaux de bord."
+
+  - step: 7
+    name: application_exposure
+    description: "Déployer la DMZ, les reverse proxy, les applications exposées et les chemins de publication."
+
+  - step: 8
+    name: protected_data_services
+    description: "Déployer les bases de données, les services sensibles et leurs mécanismes de protection."
+
+  - step: 9
+    name: backup_and_recovery
+    description: "Déployer les solutions de sauvegarde, de restauration et de réplication associées."
+
+  - step: 10
+    name: user_and_workload_enrollment
+    description: "Déployer les postes, agents, workloads et les rattacher aux services d’identité et de supervision."
+
+  - step: 11
+    name: policy_enforcement
+    description: "Appliquer les règles de sécurité, de flux autorisés, de refus explicites et les contrôles inter-zones."
+
+  - step: 12
+    name: validation_and_handover
+    description: "Vérifier la cohérence, la conformité aux policies et préparer la validation finale du lab."

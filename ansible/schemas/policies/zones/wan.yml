@@ -1,0 +1,65 @@
+version: 1
+
+zone_policy:
+
+  zone: wan
+
+  description: "Zone externe non maîtrisée représentant Internet ou un réseau amont non fiable."
+
+  trust_level: untrusted
+  sensitivity: high
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  allowed_inbound_from: []
+
+  allowed_outbound_to:
+    - dmz
+
+  description_access: "La zone WAN ne doit joindre que les services explicitement publiés."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  direct_access_to_mgmt_forbidden: true
+  direct_access_to_ad_forbidden: true
+  direct_access_to_db_forbidden: true
+  direct_access_to_backup_forbidden: true
+  direct_access_to_soc_forbidden: true
+  direct_access_to_transit_forbidden: true
+  direct_access_to_interconnect_forbidden: true
+
+  description_restrictions: "Aucun accès direct aux zones internes ou techniques ne doit être possible depuis WAN."
+
+  # =========================
+  # EXPOSURE MODEL
+  # =========================
+
+  public_entry_zone_only: true
+  exposure_must_be_controlled: true
+  reverse_proxy_preferred: true
+  direct_sensitive_exposure_forbidden: true
+
+  description_exposure: "Le WAN ne sert que de point d’entrée vers des services publiés de manière contrôlée."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  considered_untrusted: true
+  anti_spoofing_required: true
+  logging_required: true
+
+  description_security: "Les flux provenant du WAN doivent être considérés hostiles par défaut."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_internal_services: true
+  only_declared_published_services_allowed: true
+
+  description_validation: "Seuls les services publiés explicitement vers la DMZ peuvent être accessibles depuis WAN."

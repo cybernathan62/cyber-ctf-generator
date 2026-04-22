@@ -1,0 +1,90 @@
+version: 1
+
+platform_policy:
+
+  name: ad_replication
+
+  description: "Policy de réplication Active Directory entre contrôleurs de domaine avec cohérence et sécurité renforcée."
+
+  applies_to_roles:
+    - ad_server
+
+  # =========================
+  # REPLICATION MODEL
+  # =========================
+
+  replication_required_if_multi_node: true
+  multi_master_replication: true
+  domain_controller_peers_must_be_declared: true
+
+  description_replication: "Les contrôleurs de domaine doivent répliquer de manière cohérente et contrôlée."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  replication_only_between_ad_servers: true
+  replication_from_non_ad_forbidden: true
+  admin_access_only_via_bastion: true
+
+  description_access: "Seuls les DC peuvent participer à la réplication AD."
+
+  # =========================
+  # NETWORK
+  # =========================
+
+  replication_must_use_internal_networks: true
+  replication_over_wan_forbidden_by_default: true
+  replication_paths_must_be_restricted: true
+
+  description_network: "La réplication doit rester interne et contrôlée."
+
+  # =========================
+  # CONSISTENCY
+  # =========================
+
+  directory_consistency_required: true
+  time_synchronization_required: true
+  dns_consistency_required: true
+
+  description_consistency: "La cohérence AD dépend du temps, DNS et réplication correcte."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  replication_traffic_must_be_authenticated: true
+  unauthorized_domain_controllers_forbidden: true
+  privileged_access_protection_required: true
+
+  description_security: "Les DC doivent être strictement contrôlés et protégés."
+
+  # =========================
+  # FAILOVER
+  # =========================
+
+  multiple_domain_controllers_recommended: true
+  failover_supported: true
+  failover_must_preserve_identity_integrity: true
+
+  description_failover: "La perte d’un DC ne doit pas impacter l’intégrité du domaine."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  replication_monitoring_required: true
+  authentication_event_monitoring_required: true
+  privileged_activity_alerting_required: true
+
+  description_monitoring: "Les activités AD doivent être surveillées en continu."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  inconsistent_domain_state_rejected: true
+  missing_replication_peers_detected: true
+  unauthorized_replication_paths_forbidden: true
+
+  description_validation: "Toute incohérence AD doit être détectée et rejetée."

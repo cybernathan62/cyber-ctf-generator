@@ -1,0 +1,68 @@
+version: 1
+
+zone_policy:
+
+  zone: transit
+
+  description: "Réseau de transit entre équipements de sécurité pour le routage inter-zone."
+
+  trust_level: restricted
+  sensitivity: high
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  allowed_inbound_from:
+    - edge_firewall
+    - edge_firewall_cluster
+    - internal_firewall
+    - internal_firewall_cluster
+
+  allowed_outbound_to:
+    - edge_firewall
+    - edge_firewall_cluster
+    - internal_firewall
+    - internal_firewall_cluster
+    - soc
+
+  description_access: "Le réseau transit est réservé aux équipements réseau."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  access_from_users_forbidden: true
+  access_from_dmz_forbidden: true
+  access_from_wan_forbidden: true
+  access_from_workstations_forbidden: true
+
+  description_restrictions: "Aucun système non réseau ne doit accéder au transit."
+
+  # =========================
+  # NETWORK ROLE
+  # =========================
+
+  used_for_routing: true
+  used_for_firewall_interconnection: true
+  not_for_application_traffic: true
+
+  description_role: "Le transit sert uniquement au routage et à l’interconnexion."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  monitoring_required: true
+  logging_required: true
+
+  description_security: "Les flux transit doivent être visibles et contrôlés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_services: true
+  must_not_be_exposed: true
+
+  description_validation: "Aucun service ne doit être déployé sur le réseau transit."

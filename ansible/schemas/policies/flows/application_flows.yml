@@ -1,0 +1,100 @@
+version: 1
+
+application_flows:
+
+  # =========================
+  # PUBLICATION CONTRÔLÉE
+  # =========================
+
+  - name: users_to_reverse_proxy_web
+    action: allow
+    src_roles:
+      - user_workstation
+    dst_roles:
+      - reverse_proxy
+    services:
+      - http
+      - https
+    description: "Les utilisateurs accèdent aux services publiés uniquement via le reverse proxy."
+
+  - name: reverse_proxy_to_app_web
+    action: allow
+    src_role: reverse_proxy
+    dst_roles:
+      - app_server
+    services:
+      - http
+      - https
+      - app_api
+    description: "Le reverse proxy relaie les flux vers les serveurs applicatifs."
+
+  # =========================
+  # BACKEND APPLICATIF
+  # =========================
+
+  - name: app_to_db_backend
+    action: allow
+    src_role: app_server
+    dst_roles:
+      - db_server
+    services:
+      - mysql
+      - postgres
+    description: "Les serveurs applicatifs accèdent aux bases uniquement via les protocoles BD autorisés."
+
+  - name: app_to_ad_identity
+    action: allow
+    src_role: app_server
+    dst_roles:
+      - ad_server
+    services:
+      - kerberos
+      - ldap
+      - ldaps
+      - dns
+    description: "Les applications peuvent consommer les services d’identité nécessaires."
+
+  # =========================
+  # RESTRICTIONS APPLICATIVES
+  # =========================
+
+  - name: reverse_proxy_to_db_denied
+    action: deny
+    src_role: reverse_proxy
+    dst_roles:
+      - db_server
+    description: "Le reverse proxy ne doit jamais accéder directement à la base."
+
+  - name: users_to_db_denied
+    action: deny
+    src_role: user_workstation
+    dst_roles:
+      - db_server
+    description: "Les utilisateurs ne doivent jamais accéder directement aux bases."
+
+  - name: users_to_app_direct_denied
+    action: deny
+    src_role: user_workstation
+    dst_roles:
+      - app_server
+    description: "Les utilisateurs ne doivent pas contourner le reverse proxy pour joindre l’applicatif."
+
+  - name: dmz_lateral_restriction
+    action: deny
+    src_role: app_server
+    dst_roles:
+      - reverse_proxy
+    description: "Les flux latéraux inversés inutiles dans la DMZ sont interdits par défaut."
+
+  # =========================
+  # CONTRAINTES DE CONFORMITÉ
+  # =========================
+
+  - name: app_exposure_must_be_controlled
+    action: enforce
+    src_role: reverse_proxy
+    requirement:
+      - tls_termination
+      - controlled_publication
+      - request_filtering
+    description: "Toute exposition applicative doit passer par un point de contrôle."

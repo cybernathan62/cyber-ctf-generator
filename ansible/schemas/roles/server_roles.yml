@@ -1,0 +1,159 @@
+version: 1
+
+server_roles:
+
+  bastion:
+    description: "Point d’entrée d’administration centralisé pour les accès privilégiés à l’infrastructure."
+    default_zone: mgmt
+    sensitivity: high
+    exposes_services:
+      - ssh
+      - rdp
+      - https
+    consumes_services:
+      - dns
+      - ntp
+      - identity_auth
+      - monitoring_agent
+      - logging
+    allowed_management_from:
+      - admin_workstation
+    allowed_to_manage:
+      - edge_firewall
+      - edge_firewall_cluster
+      - internal_firewall
+      - internal_firewall_cluster
+      - reverse_proxy
+      - app_server
+      - db_server
+      - ad_server
+      - backup_server
+      - zabbix_server
+      - wazuh_server
+    required_capabilities:
+      - privileged_access_gateway
+      - session_traceability
+      - hardened_access
+
+  reverse_proxy:
+    description: "Point de publication contrôlée des services web exposés."
+    default_zone: dmz
+    sensitivity: medium
+    exposes_services:
+      - http
+      - https
+    consumes_services:
+      - dns
+      - ntp
+      - backend_https
+      - monitoring_agent
+      - logging
+    allowed_management_from:
+      - bastion
+    allowed_upstreams:
+      - app_server
+    required_capabilities:
+      - tls_termination
+      - controlled_publication
+      - request_filtering
+
+  app_server:
+    description: "Serveur applicatif intermédiaire consommant éventuellement des services d’identité et de base de données."
+    default_zone: dmz
+    sensitivity: medium
+    exposes_services:
+      - http
+      - https
+      - app_api
+    consumes_services:
+      - dns
+      - ntp
+      - identity_auth
+      - db_access
+      - monitoring_agent
+      - logging
+    allowed_management_from:
+      - bastion
+    allowed_backends:
+      - db_server
+      - ad_server
+    required_capabilities:
+      - controlled_app_exposure
+      - secure_backend_connectivity
+
+  db_server:
+    description: "Serveur de base de données dédié aux applications autorisées et aux flux de réplication/backup."
+    default_zone: db
+    sensitivity: critical
+    exposes_services:
+      - mysql
+      - postgres
+    consumes_services:
+      - dns
+      - ntp
+      - backup_agent
+      - monitoring_agent
+      - logging
+    allowed_management_from:
+      - bastion
+    allowed_clients:
+      - app_server
+      - backup_server
+    required_capabilities:
+      - protected_data_storage
+      - restricted_client_access
+      - backup_integration
+
+  ad_server:
+    description: "Serveur d’identité et de services cœur : annuaire, authentification, DNS interne, fichiers."
+    default_zone: ad
+    sensitivity: critical
+    exposes_services:
+      - kerberos
+      - ldap
+      - ldaps
+      - dns
+      - smb
+      - winrm
+      - rdp
+    consumes_services:
+      - ntp
+      - monitoring_agent
+      - logging
+      - backup_agent
+    allowed_management_from:
+      - bastion
+    allowed_clients:
+      - workstation
+      - app_server
+      - bastion
+    required_capabilities:
+      - centralized_identity
+      - secure_administration
+      - policy_distribution
+
+  backup_server:
+    description: "Serveur de sauvegarde, dépôt, restauration et éventuellement réplication inter-sites."
+    default_zone: backup
+    sensitivity: critical
+    exposes_services:
+      - backup_repo
+      - rsync
+      - ssh
+    consumes_services:
+      - dns
+      - ntp
+      - monitoring_agent
+      - logging
+    allowed_management_from:
+      - bastion
+    allowed_clients:
+      - db_server
+      - ad_server
+      - app_server
+      - wazuh_server
+      - zabbix_server
+    required_capabilities:
+      - isolated_backup_storage
+      - restore_workflows
+      - retention_control

@@ -1,0 +1,98 @@
+version: 1
+
+host_policy:
+
+  role: zabbix_server
+
+  description: "Serveur de supervision chargé de la collecte de métriques, des checks actifs et des tableaux de bord."
+
+  zone: soc
+
+  sensitivity: high
+  monitoring_core_system: true
+
+  # =========================
+  # CORE FUNCTIONS
+  # =========================
+
+  allowed_functions:
+    - metrics_collection
+    - active_checks
+    - alerting
+    - dashboarding
+    - logging
+
+  description_functions: "Zabbix centralise la supervision technique des hôtes et services."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  accepts_connections_from:
+    - app_server
+    - db_server
+    - ad_server
+    - backup_server
+    - reverse_proxy
+    - user_workstation
+    - bastion
+
+  may_connect_to:
+    - app_server
+    - db_server
+    - ad_server
+    - backup_server
+    - reverse_proxy
+
+  description_access: "Zabbix reçoit les métriques et peut effectuer des contrôles actifs autorisés."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  direct_public_exposure_forbidden: true
+  admin_only_via_bastion: true
+  strong_authentication_required: true
+
+  description_security: "L’interface et l’administration Zabbix ne doivent jamais être exposées publiquement."
+
+  # =========================
+  # MONITORING ROLE
+  # =========================
+
+  central_monitoring_platform: true
+  active_checks_must_be_limited: true
+  dashboard_access_must_be_controlled: true
+
+  description_role: "Zabbix supervise l’infrastructure mais ne doit pas devenir un pivot d’administration."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  may_not_admin_firewalls: true
+  may_not_admin_ad: true
+  may_not_access_db_as_client: true
+  lateral_movement_restricted: true
+
+  description_restrictions: "Zabbix ne doit pas initier de flux non nécessaires vers les systèmes critiques."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  self_monitoring_required: true
+  logging_required: true
+  backup_required: true
+
+  description_monitoring: "La plateforme de supervision doit elle-même être supervisée, journalisée et sauvegardée."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_public_services: true
+  must_not_host_identity_services: true
+  must_not_host_backup_services: true
+
+  description_validation: "Zabbix ne doit porter que des fonctions de supervision."

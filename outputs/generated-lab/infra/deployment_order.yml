@@ -1,0 +1,98 @@
+deployment_steps:
+  -
+    order: 1
+    id: deploy-vms
+    title: "Deploy all virtual machines"
+    type: vm_deploy
+    targets:
+      - pfsense-edge-1
+      - pfsense-edge-2
+      - pfsense-internal-1
+      - bastion-1
+      - reverse-proxy-1
+      - db-server-1
+      - wazuh-1
+      - zabbix-1
+  -
+    order: 2
+    id: restore-pfsense
+    title: "Restore/configure pfSense nodes"
+    type: pfsense_restore
+    targets:
+      - pfsense-edge-1
+      - pfsense-edge-2
+      - pfsense-internal-1
+  -
+    order: 3
+    id: generate-inventories
+    title: "Generate Ansible inventories"
+    type: inventory_generation
+    targets:
+      - pfsense-edge-1
+      - pfsense-edge-2
+      - pfsense-internal-1
+      - bastion-1
+      - reverse-proxy-1
+      - db-server-1
+      - wazuh-1
+      - zabbix-1
+  -
+    order: 4
+    id: validate-bootstrap
+    title: "Validate bootstrap connectivity"
+    type: ansible_validation
+    targets:
+      - pfsense-edge-1
+      - pfsense-edge-2
+      - pfsense-internal-1
+      - bastion-1
+      - reverse-proxy-1
+      - db-server-1
+      - wazuh-1
+      - zabbix-1
+  -
+    order: 5
+    id: cutover-debian
+    title: "Run Debian cutover"
+    type: debian_cutover
+    targets:
+      - bastion-1
+      - reverse-proxy-1
+      - db-server-1
+      - wazuh-1
+      - zabbix-1
+  -
+    order: 6
+    id: deploy-dmz-site
+    title: "Deploy DMZ payload"
+    type: dmz_site
+    targets:
+      - reverse-proxy-1
+  -
+    order: 7
+    id: configure-wazuh
+    title: "Configure Wazuh"
+    type: wazuh
+    targets:
+      - wazuh-1
+  -
+    order: 8
+    id: configure-zabbix
+    title: "Configure Zabbix"
+    type: zabbix
+    targets:
+      - zabbix-1
+  -
+    order: 9
+    id: post-validation
+    title: "Final validation"
+    type: post_validation
+    targets:
+      - pfsense-edge-1
+      - pfsense-edge-2
+      - pfsense-internal-1
+      - bastion-1
+      - reverse-proxy-1
+      - db-server-1
+      - wazuh-1
+      - zabbix-1

@@ -1,0 +1,74 @@
+version: 1
+
+zone_policy:
+
+  zone: users
+
+  description: "Zone des postes utilisateurs et équipements métiers."
+
+  trust_level: medium
+  sensitivity: medium
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  allowed_inbound_from:
+    - mgmt
+    - ad
+
+  allowed_outbound_to:
+    - dmz
+    - ad
+    - soc
+
+  description_access: "Les utilisateurs accèdent aux services applicatifs et d’identité."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  direct_access_to_db_forbidden: true
+  direct_access_to_backup_forbidden: true
+  direct_access_to_firewall_forbidden: true
+  direct_admin_access_forbidden: true
+
+  description_restrictions: "Les postes utilisateurs ne doivent pas accéder aux ressources critiques."
+
+  # =========================
+  # SECURITY POSTURE
+  # =========================
+
+  considered_untrusted: true
+  lateral_movement_restricted: true
+
+  description_security: "Les postes utilisateurs sont considérés comme potentiellement compromis."
+
+  # =========================
+  # DEPENDENCIES
+  # =========================
+
+  requires_identity_services: true
+  requires_dns: true
+  requires_ntp: true
+
+  description_dependencies: "Les postes dépendent fortement des services AD."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  monitoring_required: true
+  logging_required: true
+  endpoint_protection_required: true
+
+  description_monitoring: "Les postes doivent être supervisés et protégés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_services: true
+  must_not_expose_services: true
+
+  description_validation: "Les postes utilisateurs ne doivent pas exposer de services réseau."

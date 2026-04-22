@@ -1,3 +1,4 @@
+ HEAD
 # Logs
 logs
 *.log
@@ -137,3 +138,43 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Node
+node_modules/
+dist/
+
+# Vagrant / VirtualBox
+.vagrant/
+**/.vagrant/
+*.box
+*.vdi
+*.vbox
+*.vbox-prev
+*.log
+
+# Test VMs / local lab artifacts
+test-pfsense/
+
+# Backups
+Backup/
+
+# SSH keys / secrets
+keys/
+*.pem
+*.key
+*.rsa
+
+# Generated runtime state
+outputs/generated-lab/.vagrant/
+
+# OS files
+.DS_Store
+Thumbs.dbpassbolt-recovery-kit.txt
+
+# secrets
+passbolt-recovery-kit.txt
+
+# useless runtime logs
+outputs/full-generation-response.txt
+outputs/generation-failure.txt
+ 8a98421 (feat: initial cyber CTF infra generator)

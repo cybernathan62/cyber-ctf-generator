@@ -1,0 +1,97 @@
+version: 1
+
+exposure_policy:
+
+  # =========================
+  # PRINCIPES GENERAUX
+  # =========================
+
+  controlled_exposure_required: true
+  reverse_proxy_preferred: true
+  direct_exposure_minimized: true
+
+  description: "Toute exposition doit être contrôlée et validée."
+
+  # =========================
+  # METHODES D’EXPOSITION
+  # =========================
+
+  allowed_exposure_methods:
+    - reverse_proxy
+    - controlled_nat
+
+  forbidden_exposure_methods:
+    - direct_host_exposure
+    - unmanaged_port_forward
+
+  description_methods: "Seules les méthodes validées peuvent être utilisées."
+
+  # =========================
+  # ZONES AUTORISEES
+  # =========================
+
+  zones_allowed_for_exposure:
+    - dmz
+
+  zones_forbidden_for_exposure:
+    - db
+    - ad
+    - backup
+    - soc
+    - mgmt
+
+  description_zones: "Seule la DMZ peut héberger des services exposés."
+
+  # =========================
+  # SERVICES EXPOSABLES
+  # =========================
+
+  allowed_public_services:
+    - http
+    - https
+
+  restricted_services_require_approval:
+    - ssh
+    - rdp
+
+  forbidden_public_services:
+    - mysql
+    - postgres
+    - ldap
+    - kerberos
+    - smb
+
+  description_services: "Seuls les services web sont librement exposables."
+
+  # =========================
+  # CONDITIONS D’EXPOSITION
+  # =========================
+
+  exposure_requirements:
+    - tls_required
+    - logging_required
+    - monitoring_required
+    - access_control_required
+
+  description_requirements: "Tout service exposé doit être sécurisé et supervisé."
+
+  # =========================
+  # ADMIN EXPOSURE
+  # =========================
+
+  admin_exposure_restricted: true
+  admin_access_requires:
+    - bastion
+    - ip_whitelisting
+    - strong_authentication
+
+  description_admin: "Les accès admin exposés doivent être strictement contrôlés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  exposure_must_be_explicitly_declared: true
+  implicit_exposure_forbidden: true
+
+  description_validation: "Aucun service ne doit être exposé sans déclaration explicite."

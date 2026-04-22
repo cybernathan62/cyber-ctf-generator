@@ -1,0 +1,95 @@
+version: 1
+
+environment_profiles:
+
+  demo_minimal:
+    description: "Profil léger pour démonstration rapide avec exposition minimale et peu de composants."
+    topology_model: simple_single_zone
+    required_capabilities:
+      - basic_firewalling
+      - basic_administration
+    optional_capabilities:
+      - monitoring
+      - reverse_proxy
+    enforce_high_availability: false
+    enforce_backup_isolation: false
+    enforce_full_observability: false
+
+  training_segmented:
+    description: "Profil pédagogique segmenté avec bastion, DMZ, supervision et zones sensibles."
+    topology_model: segmented_multi_zone
+    required_capabilities:
+      - inter_zone_filtering
+      - bastion_administration
+      - controlled_exposure
+      - monitoring
+      - centralized_logging
+    optional_capabilities:
+      - backup
+      - workstation_enrollment
+    enforce_high_availability: false
+    enforce_backup_isolation: true
+    enforce_full_observability: true
+
+  cyber_range_standard:
+    description: "Profil cyber range réaliste avec plusieurs zones, services coeur, observabilité et contrôle des flux."
+    topology_model: dual_firewall_segmented
+    required_capabilities:
+      - inter_zone_filtering
+      - bastion_administration
+      - controlled_exposure
+      - monitoring
+      - centralized_logging
+      - identity_services
+      - protected_data_services
+    optional_capabilities:
+      - backup
+      - reverse_proxy
+      - workstation_enrollment
+    enforce_high_availability: false
+    enforce_backup_isolation: true
+    enforce_full_observability: true
+
+  cyber_range_ha:
+    description: "Profil avancé avec edge HA, synchronisation d’infrastructure et publication contrôlée."
+    topology_model: ha_edge_segmented
+    required_capabilities:
+      - firewall_high_availability
+      - inter_zone_filtering
+      - bastion_administration
+      - controlled_exposure
+      - monitoring
+      - centralized_logging
+      - identity_services
+      - protected_data_services
+    optional_capabilities:
+      - backup
+      - workstation_enrollment
+      - internal_firewalling
+    enforce_high_availability: true
+    enforce_backup_isolation: true
+    enforce_full_observability: true
+
+  enterprise_simulation:
+    description: "Profil complet multi-tier avec HA, zones sensibles dédiées, observabilité étendue et restauration."
+    topology_model: full_multi_tier_ha
+    required_capabilities:
+      - firewall_high_availability
+      - internal_firewalling
+      - bastion_administration
+      - controlled_exposure
+      - monitoring
+      - centralized_logging
+      - identity_services
+      - protected_data_services
+      - backup_and_recovery
+      - east_west_controls
+    optional_capabilities:
+      - workstation_enrollment
+      - reverse_proxy
+      - cluster_services
+      - ad_replication
+      - database_replication
+    enforce_high_availability: true
+    enforce_backup_isolation: true
+    enforce_full_observability: true

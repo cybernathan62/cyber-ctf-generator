@@ -1,0 +1,433 @@
+---
+- name: Install Wazuh all-in-one (NAT test)
+  hosts: wazuh
+  become: true
+  gather_facts: true
+
+  vars:
+    wazuh_version: "4.14.4"
+    wazuh_major_minor: "4.14"
+
+    wazuh_keyring: /usr/share/keyrings/wazuh.gpg
+    wazuh_repo_file: /etc/apt/sources.list.d/wazuh.list
+    wazuh_repo_line: "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main"
+
+    wazuh_bind_ip: "{{ indexer_network_host | default(ansible_facts['default_ipv4']['address']) }}"
+    wazuh_indexer_data_dir: /data/wazuh-indexer
+    wazuh_indexer_log_dir: /data/wazuh-log/wazuh-indexer
+    wazuh_manager_data_dir: /data/wazuh-manager
+    wazuh_dashboard_data_dir: /data/wazuh-dashboard
+
+    wazuh_cert_dir: /root/wazuh-certificates
+
+    wazuh_indexer_admin_user: "admin"
+    wazuh_indexer_admin_password: "ChangeMe_Indexer_Admin"
+
+  tasks:
+    - name: Repair broken packages if any
+      ansible.builtin.command: apt-get --fix-broken install -y
+      changed_when: false
+      failed_when: false
+
+    - name: Refresh apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install prerequisites
+      ansible.builtin.apt:
+        name:
+          - curl
+          - gnupg
+          - ca-certificates
+          - apt-transport-https
+          - debconf
+          - adduser
+          - procps
+          - rsync
+          - tar
+        state: present
+
+    - name: Ensure keyrings directory exists
+      ansible.builtin.file:
+        path: /usr/share/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Install Wazuh GPG key
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl -fsSL https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --dearmor -o {{ wazuh_keyring }}
+        chmod 0644 {{ wazuh_keyring }}
+      args:
+        creates: "{{ wazuh_keyring }}"
+
+    - name: Configure Wazuh repository
+      ansible.builtin.copy:
+        dest: "{{ wazuh_repo_file }}"
+        content: "{{ wazuh_repo_line }}\n"
+        mode: "0644"
+
+    - name: Refresh apt cache after adding repo
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Install Wazuh packages
+      ansible.builtin.apt:
+        name:
+          - "wazuh-indexer={{ wazuh_version }}-*"
+          - "wazuh-manager={{ wazuh_version }}-*"
+          - "wazuh-dashboard={{ wazuh_version }}-*"
+        state: present
+        allow_downgrade: true
+
+    - name: Stop Wazuh services before configuration
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: stopped
+      loop:
+        - wazuh-indexer
+        - wazuh-manager
+        - wazuh-dashboard
+      failed_when: false
+
+    - name: Create external data directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ wazuh_indexer_data_dir }}", owner: "wazuh-indexer", group: "wazuh-indexer", mode: "0750" }
+        - { path: "{{ wazuh_indexer_log_dir }}", owner: "wazuh-indexer", group: "wazuh-indexer", mode: "0750" }
+        - { path: "{{ wazuh_manager_data_dir }}", owner: "root", group: "root", mode: "0750" }
+        - { path: "{{ wazuh_dashboard_data_dir }}", owner: "root", group: "root", mode: "0750" }
+
+    - name: Check current indexer data dir
+      ansible.builtin.stat:
+        path: /var/lib/wazuh-indexer
+        follow: false
+      register: wazuh_indexer_data_stat
+
+    - name: Copy existing indexer data to /data
+      ansible.builtin.command: rsync -a /var/lib/wazuh-indexer/ {{ wazuh_indexer_data_dir }}/
+      when:
+        - wazuh_indexer_data_stat.stat.exists
+        - not (wazuh_indexer_data_stat.stat.islnk | default(false))
+
+    - name: Backup old indexer data dir
+      ansible.builtin.command: mv /var/lib/wazuh-indexer /var/lib/wazuh-indexer.bak
+      when:
+        - wazuh_indexer_data_stat.stat.exists
+        - not (wazuh_indexer_data_stat.stat.islnk | default(false))
+
+    - name: Link indexer data dir to /data
+      ansible.builtin.file:
+        src: "{{ wazuh_indexer_data_dir }}"
+        dest: /var/lib/wazuh-indexer
+        state: link
+
+    - name: Ensure indexer data ownership
+      ansible.builtin.file:
+        path: "{{ wazuh_indexer_data_dir }}"
+        state: directory
+        owner: wazuh-indexer
+        group: wazuh-indexer
+        recurse: true
+
+    - name: Ensure indexer log ownership
+      ansible.builtin.file:
+        path: "{{ wazuh_indexer_log_dir }}"
+        state: directory
+        owner: wazuh-indexer
+        group: wazuh-indexer
+        recurse: true
+
+    - name: Create Wazuh cert config
+      ansible.builtin.copy:
+        dest: /root/config.yml
+        mode: "0600"
+        content: |
+          nodes:
+            indexer:
+              - name: node-1
+                ip: "{{ wazuh_bind_ip }}"
+            server:
+              - name: wazuh-server
+                ip: "{{ wazuh_bind_ip }}"
+            dashboard:
+              - name: dashboard
+                ip: "{{ wazuh_bind_ip }}"
+
+    - name: Download Wazuh cert tool
+      ansible.builtin.get_url:
+        url: "https://packages.wazuh.com/{{ wazuh_major_minor }}/wazuh-certs-tool.sh"
+        dest: /root/wazuh-certs-tool.sh
+        mode: "0700"
+
+    - name: Generate Wazuh certificates
+      ansible.builtin.command: /root/wazuh-certs-tool.sh -A
+      args:
+        chdir: /root
+        creates: "{{ wazuh_cert_dir }}"
+
+    - name: Check Wazuh certificate directory
+      ansible.builtin.stat:
+        path: "{{ wazuh_cert_dir }}"
+      register: wazuh_cert_dir_stat
+
+    - name: Fail if Wazuh certificate directory is missing
+      ansible.builtin.fail:
+        msg: "Wazuh certificate directory {{ wazuh_cert_dir }} not found after certificate generation"
+      when: not wazuh_cert_dir_stat.stat.exists
+
+    - name: Ensure indexer cert directory exists with correct permissions
+      ansible.builtin.file:
+        path: /etc/wazuh-indexer/certs
+        state: directory
+        owner: root
+        group: wazuh-indexer
+        mode: "0750"
+
+    - name: Ensure dashboard cert directory exists
+      ansible.builtin.file:
+        path: /etc/wazuh-dashboard/certs
+        state: directory
+        owner: root
+        group: wazuh-dashboard
+        mode: "0750"
+
+    - name: Deploy indexer certificates
+      ansible.builtin.copy:
+        src: "{{ wazuh_cert_dir }}/{{ item.src }}"
+        dest: "/etc/wazuh-indexer/certs/{{ item.dest }}"
+        remote_src: true
+        owner: root
+        group: wazuh-indexer
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: "root-ca.pem", dest: "root-ca.pem", mode: "0640" }
+        - { src: "node-1.pem", dest: "indexer.pem", mode: "0640" }
+        - { src: "node-1-key.pem", dest: "indexer-key.pem", mode: "0640" }
+        - { src: "admin.pem", dest: "admin.pem", mode: "0640" }
+        - { src: "admin-key.pem", dest: "admin-key.pem", mode: "0640" }
+
+    - name: Re-assert indexer cert directory permissions
+      ansible.builtin.file:
+        path: /etc/wazuh-indexer/certs
+        state: directory
+        owner: root
+        group: wazuh-indexer
+        mode: "0750"
+
+    - name: Deploy dashboard certificates
+      ansible.builtin.copy:
+        src: "{{ wazuh_cert_dir }}/{{ item.src }}"
+        dest: "/etc/wazuh-dashboard/certs/{{ item.dest }}"
+        remote_src: true
+        owner: root
+        group: wazuh-dashboard
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: "root-ca.pem", dest: "root-ca.pem", mode: "0640" }
+        - { src: "dashboard.pem", dest: "dashboard.pem", mode: "0640" }
+        - { src: "dashboard-key.pem", dest: "dashboard-key.pem", mode: "0640" }
+
+    - name: Remove old managed block from opensearch.yml
+      ansible.builtin.blockinfile:
+        path: /etc/wazuh-indexer/opensearch.yml
+        marker: "# {mark} ANSIBLE WAZUH NAT"
+        state: absent
+
+    - name: Remove duplicate network.host lines
+      ansible.builtin.replace:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^(network\.host:.*\n)(network\.host:.*\n)+'
+        replace: '\1'
+
+    - name: Remove duplicate node.name lines
+      ansible.builtin.replace:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^(node\.name:.*\n)(node\.name:.*\n)+'
+        replace: '\1'
+
+    - name: Remove duplicate cluster.initial_cluster_manager_nodes lines
+      ansible.builtin.replace:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^(cluster\.initial_cluster_manager_nodes:.*\n)(cluster\.initial_cluster_manager_nodes:.*\n)+'
+        replace: '\1'
+
+    - name: Remove duplicate discovery.seed_hosts lines
+      ansible.builtin.replace:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^(discovery\.seed_hosts:.*\n)(discovery\.seed_hosts:.*\n)+'
+        replace: '\1'
+
+    - name: Remove duplicate path.data lines
+      ansible.builtin.replace:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^(path\.data:.*\n)(path\.data:.*\n)+'
+        replace: '\1'
+
+    - name: Remove duplicate path.logs lines
+      ansible.builtin.replace:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^(path\.logs:.*\n)(path\.logs:.*\n)+'
+        replace: '\1'
+
+    - name: Fix network.host
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^network.host:'
+        line: "network.host: {{ wazuh_bind_ip }}"
+
+    - name: Fix node.name
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^node.name:'
+        line: "node.name: node-1"
+
+    - name: Fix cluster manager nodes
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^cluster.initial_cluster_manager_nodes:'
+        line: 'cluster.initial_cluster_manager_nodes: ["node-1"]'
+
+    - name: Fix discovery seed hosts
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^discovery.seed_hosts:'
+        line: 'discovery.seed_hosts: ["{{ wazuh_bind_ip }}"]'
+
+    - name: Fix data path
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^path.data:'
+        line: "path.data: {{ wazuh_indexer_data_dir }}"
+
+    - name: Fix log path
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-indexer/opensearch.yml
+        regexp: '^path.logs:'
+        line: "path.logs: {{ wazuh_indexer_log_dir }}"
+
+    - name: Ensure dashboard server.host
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-dashboard/opensearch_dashboards.yml
+        regexp: '^server.host:'
+        line: 'server.host: "{{ dashboard_server_host | default("0.0.0.0") }}"'
+
+    - name: Ensure dashboard indexer hosts
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-dashboard/opensearch_dashboards.yml
+        regexp: '^opensearch.hosts:'
+        line: 'opensearch.hosts: ["https://{{ wazuh_bind_ip }}:{{ indexer_http_port | default(9200) }}"]'
+
+    - name: Ensure dashboard indexer username
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-dashboard/opensearch_dashboards.yml
+        regexp: '^opensearch.username:'
+        line: 'opensearch.username: "{{ wazuh_indexer_admin_user }}"'
+
+    - name: Ensure dashboard indexer password
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-dashboard/opensearch_dashboards.yml
+        regexp: '^opensearch.password:'
+        line: 'opensearch.password: "{{ wazuh_indexer_admin_password }}"'
+
+    - name: Ensure dashboard CA
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-dashboard/opensearch_dashboards.yml
+        regexp: '^opensearch.ssl.certificateAuthorities:'
+        line: 'opensearch.ssl.certificateAuthorities: ["/etc/wazuh-dashboard/certs/root-ca.pem"]'
+
+    - name: Ensure dashboard certificate
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-dashboard/opensearch_dashboards.yml
+        regexp: '^server.ssl.certificate:'
+        line: 'server.ssl.certificate: "/etc/wazuh-dashboard/certs/dashboard.pem"'
+
+    - name: Ensure dashboard key
+      ansible.builtin.lineinfile:
+        path: /etc/wazuh-dashboard/opensearch_dashboards.yml
+        regexp: '^server.ssl.key:'
+        line: 'server.ssl.key: "/etc/wazuh-dashboard/certs/dashboard-key.pem"'
+
+    - name: Start Wazuh indexer
+      ansible.builtin.systemd:
+        name: wazuh-indexer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Wait for Wazuh indexer TCP port
+      ansible.builtin.wait_for:
+        host: "{{ wazuh_bind_ip }}"
+        port: 9200
+        delay: 5
+        timeout: 120
+
+    - name: Check if indexer security init exists
+      ansible.builtin.stat:
+        path: /usr/share/wazuh-indexer/bin/indexer-security-init.sh
+      register: indexer_security_init
+
+    - name: Check Wazuh indexer API before security init
+      ansible.builtin.uri:
+        url: "https://{{ wazuh_bind_ip }}:9200"
+        method: GET
+        validate_certs: false
+        return_content: true
+        status_code: [200, 401]
+      register: wazuh_indexer_api_before
+      failed_when: false
+
+    - name: Initialize indexer security only when needed
+      ansible.builtin.command: /usr/share/wazuh-indexer/bin/indexer-security-init.sh
+      when:
+        - indexer_security_init.stat.exists
+        - wazuh_indexer_api_before.content is defined
+        - "'OpenSearch Security not initialized' in wazuh_indexer_api_before.content"
+      register: security_init_result
+      changed_when: true
+
+    - name: Wait until indexer security is initialized
+      ansible.builtin.uri:
+        url: "https://{{ wazuh_bind_ip }}:9200"
+        method: GET
+        validate_certs: false
+        return_content: true
+        status_code: [200, 401]
+      register: wazuh_indexer_api_after
+      retries: 10
+      delay: 6
+      until:
+        - wazuh_indexer_api_after.content is defined
+        - "'OpenSearch Security not initialized' not in wazuh_indexer_api_after.content"
+      failed_when: false
+
+    - name: Start Wazuh manager
+      ansible.builtin.systemd:
+        name: wazuh-manager
+        state: started
+        enabled: true
+
+    - name: Start Wazuh dashboard
+      ansible.builtin.systemd:
+        name: wazuh-dashboard
+        state: started
+        enabled: true
+
+    - name: Wait for Wazuh dashboard TCP port
+      ansible.builtin.wait_for:
+        host: "{{ dashboard_server_host | default('0.0.0.0') | regex_replace('^0\\.0\\.0\\.0$', wazuh_bind_ip) }}"
+        port: 443
+        delay: 5
+        timeout: 120
+      failed_when: false
+
+    - name: Show indexer API final response
+      ansible.builtin.debug:
+        msg: "{{ wazuh_indexer_api_after.content | default(wazuh_indexer_api_before.content | default('No API response collected')) }}"

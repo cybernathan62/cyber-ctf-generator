@@ -1,0 +1,80 @@
+version: 1
+
+platform_policy:
+
+  name: backup_replication
+
+  description: "Policy de réplication des sauvegardes entre dépôts ou sites avec contrôle d’intégrité et sécurité renforcée."
+
+  applies_to_roles:
+    - backup_server
+
+  # =========================
+  # REPLICATION MODEL
+  # =========================
+
+  replication_supported: true
+  source_and_target_must_be_declared: true
+  bidirectional_replication_forbidden_by_default: true
+
+  description_replication: "La réplication backup doit être explicitement déclarée et maîtrisée."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  replication_only_between_backup_roles: true
+  replication_from_non_backup_roles_forbidden: true
+  admin_access_only_via_bastion: true
+
+  description_access: "Seuls les systèmes de backup autorisés peuvent participer à la réplication."
+
+  # =========================
+  # DATA PROTECTION
+  # =========================
+
+  integrity_verification_required: true
+  encryption_recommended: true
+  immutable_copies_recommended: true
+
+  description_data: "Les copies répliquées doivent être protégées contre altération et corruption."
+
+  # =========================
+  # NETWORK
+  # =========================
+
+  replication_paths_must_be_restricted: true
+  replication_over_public_network_requires_hardening: true
+  direct_user_access_to_replication_targets_forbidden: true
+
+  description_network: "Les chemins de réplication doivent être limités et sécurisés."
+
+  # =========================
+  # RESTORE SAFETY
+  # =========================
+
+  restore_sources_must_be_trusted: true
+  restore_workflows_must_be_controlled: true
+  unauthorized_restore_targets_forbidden: true
+
+  description_restore: "Les restaurations doivent être pilotées et limitées à des cibles autorisées."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  replication_monitoring_required: true
+  failed_replication_alerting_required: true
+  backup_integrity_alerting_required: true
+
+  description_monitoring: "Les échecs de réplication et problèmes d’intégrité doivent être détectés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  undeclared_replication_peers_forbidden: true
+  invalid_replication_direction_rejected: true
+  inconsistent_backup_topology_rejected: true
+
+  description_validation: "Toute topologie de réplication backup doit être explicite, cohérente et validée."

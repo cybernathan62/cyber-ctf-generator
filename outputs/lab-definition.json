@@ -1,0 +1,62 @@
+{
+  "name": "prompt-generated-lab",
+  "required_roles": [
+    {
+      "role": "edge_firewall",
+      "variant": "simple",
+      "zone": "edge",
+      "count": 1,
+      "node_count": 1
+    },
+    {
+      "role": "internal_firewall",
+      "variant": "simple",
+      "zone": "soc",
+      "count": 1,
+      "node_count": 1
+    },
+    {
+      "role": "internal_firewall",
+      "variant": "simple",
+      "zone": "data",
+      "count": 1,
+      "node_count": 1
+    },
+    {
+      "role": "bastion",
+      "variant": "simple",
+      "zone": "management",
+      "count": 1,
+      "node_count": 1
+    },
+    {
+      "role": "reverse_proxy",
+      "variant": "simple",
+      "zone": "dmz",
+      "count": 1,
+      "node_count": 1
+    },
+    {
+      "role": "db_server",
+      "variant": "simple",
+      "zone": "data",
+      "count": 1,
+      "node_count": 1
+    },
+    {
+      "role": "wazuh_server",
+      "variant": "simple",
+      "zone": "soc",
+      "count": 1,
+      "node_count": 1
+    },
+    {
+      "role": "zabbix_server",
+      "variant": "simple",
+      "zone": "soc",
+      "count": 1,
+      "node_count": 1
+    }
+  ],
+  "instances": []
+}

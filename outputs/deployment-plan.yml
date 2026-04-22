@@ -1,0 +1,63 @@
+vm_profiles:
+  pfsense_small:
+    box: cyberctf/pfsense
+    cpus: 2
+    memory: 2048
+  debian_standard:
+    box: cyberctf/debian_wazuh
+    cpus: 2
+    memory: 2048
+  debian_heavy:
+    box: cyberctf/debian_wazuh
+    cpus: 4
+    memory: 4096
+role_mapping:
+  pfsense-edge-1: edge_firewall_cluster
+  pfsense-edge-2: edge_firewall_cluster
+  pfsense-internal-1: internal_firewall
+  bastion-1: bastion
+  reverse-proxy-1: reverse_proxy
+  ad-1: ad_server
+  db-1: db_server
+  wazuh-1: wazuh_server
+  zabbix-1: zabbix_server
+zone_mapping:
+  pfsense-edge-1:
+    wan: wan
+    mgmt: mgmt
+    dmz: dmz
+    transit: transit
+    interconnect: interconnect
+  pfsense-edge-2:
+    wan: wan
+    mgmt: mgmt
+    dmz: dmz
+    transit: transit
+    interconnect: interconnect
+  pfsense-internal-1:
+    transit: transit
+    soc: soc
+    ad: ad
+    db: db
+    backup: backup
+  bastion-1: mgmt
+  reverse-proxy-1: dmz
+  ad-1: ad
+  db-1: db
+  wazuh-1: soc
+  zabbix-1: soc
+dependencies:
+  - pfsense-edge-1
+  - pfsense-edge-2
+  - pfsense-internal-1
+  - bastion-1
+  - reverse-proxy-1
+  - ad-1
+  - db-1
+  - wazuh-1
+  - zabbix-1
+special_requirements:
+  - ha_sync_network: interconnect between pfsense-edge-1 and pfsense-edge-2
+  - admin_entrypoint: bastion-1 only
+  - controlled_public_exposure: reverse-proxy-1 in dmz
+  - dmz_to_db_default: deny

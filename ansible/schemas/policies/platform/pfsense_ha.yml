@@ -1,0 +1,89 @@
+version: 1
+
+platform_policy:
+
+  name: pfsense_ha
+
+  description: "Policy de haute disponibilité pfSense pour clusters actifs/passifs avec VIP, synchronisation d’état et synchronisation de configuration."
+
+  applies_to_roles:
+    - edge_firewall_cluster
+    - internal_firewall_cluster
+
+  # =========================
+  # HA MODEL
+  # =========================
+
+  ha_mode: active_passive
+  virtual_ip_failover_required: true
+  state_sync_required: true
+  config_sync_required: true
+
+  description_ha: "Le cluster pfSense doit assurer continuité de service et cohérence de configuration."
+
+  # =========================
+  # NETWORK REQUIREMENTS
+  # =========================
+
+  dedicated_sync_network_required: true
+  sync_network_zone: interconnect
+  sync_network_must_be_isolated: true
+  sync_network_must_not_be_routed: true
+
+  description_network: "Les flux HA doivent passer par un réseau dédié, isolé et non routé."
+
+  # =========================
+  # SERVICES
+  # =========================
+
+  required_services:
+    - carp
+    - pfsync
+    - config_sync
+
+  description_services: "Les services CARP, pfsync et config sync sont requis pour le HA."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  management_only_from:
+    - bastion
+
+  access_to_sync_network_forbidden_from:
+    - wan
+    - users
+    - dmz
+    - mgmt
+
+  description_access: "Le réseau de synchronisation ne doit être accessible qu’aux nœuds HA."
+
+  # =========================
+  # FAILURE HANDLING
+  # =========================
+
+  split_brain_prevention_required: true
+  node_health_check_required: true
+  failover_must_be_monitored: true
+
+  description_failure: "Le cluster doit prévenir les incohérences et surveiller les bascules."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  ha_services_must_not_be_exposed: true
+  admin_exposure_forbidden_on_sync_network: true
+  configuration_integrity_required: true
+
+  description_security: "Les mécanismes HA ne doivent jamais être exposés ou détournés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  all_nodes_must_have_consistent_interface_roles: true
+  all_nodes_must_share_same_ha_policy: true
+  unauthorized_ha_participants_forbidden: true
+
+  description_validation: "Tous les nœuds du cluster doivent être cohérents et strictement contrôlés."

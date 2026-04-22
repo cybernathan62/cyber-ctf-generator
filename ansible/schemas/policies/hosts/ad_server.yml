@@ -1,0 +1,97 @@
+version: 1
+
+host_policy:
+
+  role: ad_server
+
+  description: "Serveur d’identité portant annuaire, authentification, DNS interne et services coeur associés."
+
+  zone: ad
+
+  sensitivity: critical
+  identity_core_system: true
+
+  # =========================
+  # CORE FUNCTIONS
+  # =========================
+
+  allowed_functions:
+    - directory_services
+    - authentication_services
+    - dns_internal
+    - file_services
+    - policy_distribution
+    - logging
+
+  description_functions: "Le serveur AD porte l’identité centralisée et des services coeur internes."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  accepts_connections_from:
+    - user_workstation
+    - app_server
+    - bastion
+    - zabbix_server
+    - wazuh_server
+    - backup_server
+
+  may_connect_to:
+    - zabbix_server
+    - wazuh_server
+    - backup_server
+
+  description_access: "Le serveur AD reçoit uniquement les flux d’identité, d’administration contrôlée, de supervision et de sauvegarde."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  direct_public_exposure_forbidden: true
+  direct_admin_from_dmz_forbidden: true
+  strong_authentication_required: true
+  privileged_access_protection_required: true
+
+  description_security: "Le serveur AD ne doit jamais être exposé et son administration doit être strictement contrôlée."
+
+  # =========================
+  # IDENTITY ROLE
+  # =========================
+
+  centralized_identity_provider: true
+  local_authentication_on_sensitive_services_discouraged: true
+  trust_anchor_for_infrastructure: true
+
+  description_identity: "L’AD constitue l’ancrage de confiance principal de l’infrastructure."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  may_not_admin_firewalls: true
+  may_not_initiate_connections_to_dmz: true
+  may_not_be_accessed_directly_from_wan: true
+  lateral_movement_restricted: true
+
+  description_restrictions: "Le serveur AD ne doit pas devenir un pivot vers les autres zones."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  logging_required: true
+  monitoring_required: true
+  backup_required: true
+  privileged_activity_alerting_required: true
+
+  description_monitoring: "Les événements AD, accès privilégiés et changements critiques doivent être surveillés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_public_services: true
+  must_not_host_non_identity_applications: true
+
+  description_validation: "Le serveur AD ne doit héberger que des services d’identité et coeur strictement nécessaires."

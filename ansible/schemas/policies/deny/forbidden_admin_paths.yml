@@ -1,0 +1,150 @@
+version: 1
+
+forbidden_admin_paths:
+
+  # =========================
+  # ADMIN DIRECT INTERDIT
+  # =========================
+
+  - name: no_direct_admin_from_users
+    action: deny
+    src_role: user_workstation
+    dst_roles:
+      - ad_server
+      - db_server
+      - app_server
+      - reverse_proxy
+      - backup_server
+      - wazuh_server
+      - zabbix_server
+      - edge_firewall
+      - edge_firewall_cluster
+      - internal_firewall
+      - internal_firewall_cluster
+    services:
+      - ssh
+      - rdp
+      - winrm
+      - https
+    description: "Les utilisateurs ne doivent jamais administrer directement les systèmes."
+
+  - name: no_direct_admin_from_dmz
+    action: deny
+    src_roles:
+      - reverse_proxy
+      - app_server
+    dst_roles:
+      - ad_server
+      - db_server
+      - backup_server
+      - wazuh_server
+      - zabbix_server
+      - edge_firewall
+      - internal_firewall
+    services:
+      - ssh
+      - rdp
+      - winrm
+    description: "Aucune administration ne doit provenir de la DMZ."
+
+  # =========================
+  # ADMIN WORKSTATION LIMITEE
+  # =========================
+
+  - name: admin_ws_only_to_bastion
+    action: deny
+    src_role: admin_workstation
+    dst_roles:
+      - ad_server
+      - db_server
+      - app_server
+      - reverse_proxy
+      - backup_server
+      - wazuh_server
+      - zabbix_server
+      - edge_firewall
+      - internal_firewall
+    services:
+      - ssh
+      - rdp
+      - winrm
+    description: "Le poste admin ne doit pas accéder directement aux systèmes."
+
+  # =========================
+  # WAN ADMIN INTERDIT
+  # =========================
+
+  - name: no_admin_from_wan
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - ad_server
+      - db_server
+      - backup_server
+      - wazuh_server
+      - zabbix_server
+      - internal_firewall
+    services:
+      - ssh
+      - rdp
+      - winrm
+      - https
+    description: "Aucune administration ne doit être accessible depuis Internet."
+
+  # =========================
+  # FIREWALL ADMIN STRICT
+  # =========================
+
+  - name: firewall_admin_only_from_bastion
+    action: deny
+    src_roles:
+      - user_workstation
+      - admin_workstation
+      - reverse_proxy
+      - app_server
+    dst_roles:
+      - edge_firewall
+      - edge_firewall_cluster
+      - internal_firewall
+      - internal_firewall_cluster
+    services:
+      - ssh
+      - https
+    description: "Les firewalls ne doivent être administrés que via le bastion."
+
+  # =========================
+  # SOC ADMIN STRICT
+  # =========================
+
+  - name: soc_admin_only_from_bastion
+    action: deny
+    src_roles:
+      - user_workstation
+      - admin_workstation
+      - reverse_proxy
+      - app_server
+    dst_roles:
+      - wazuh_server
+      - zabbix_server
+    services:
+      - wazuh_api
+      - zabbix_web
+    description: "Les plateformes SOC ne doivent être administrées que via le bastion."
+
+  # =========================
+  # CONTRAINTES
+  # =========================
+
+  - name: bastion_mandatory_for_admin
+    action: enforce
+    requirement:
+      - admin_entrypoint_must_be_bastion
+      - privileged_access_must_be_tracked
+    description: "Tout accès admin doit passer par le bastion et être tracé."
+
+  - name: no_bypass_of_admin_controls
+    action: enforce
+    requirement:
+      - no_direct_admin_paths
+      - bastion_enforced_for_all_admin_access
+    description: "Aucun contournement du bastion ne doit être possible."

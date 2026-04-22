@@ -1,0 +1,145 @@
+version: 1
+
+conflict_rules:
+
+  # =========================
+  # ALLOW / DENY CONFLICTS
+  # =========================
+
+  - name: explicit_deny_overrides_allow
+    rule: "If the same source, destination and service tuple appears in both allow and deny rules, deny wins"
+    severity: critical
+    description: "En cas de conflit direct, la règle deny explicite doit primer."
+
+  - name: broad_allow_must_not_cancel_sensitive_deny
+    rule: "A broad allow rule must not invalidate a deny protecting db, ad, backup, soc, transit or interconnect"
+    severity: critical
+    description: "Une règle large ne doit jamais annuler une protection de zone sensible."
+
+  - name: deny_without_scope_warning
+    rule: "Any deny rule missing clear source or destination scope must be flagged as ambiguous"
+    severity: high
+    description: "Une règle deny floue devient dangereuse et doit être revue."
+
+  # =========================
+  # EXPOSURE CONFLICTS
+  # =========================
+
+  - name: public_exposure_of_sensitive_roles_forbidden
+    rule: "Any public exposure targeting db_server, ad_server, backup_server, wazuh_server or zabbix_server is invalid"
+    severity: critical
+    description: "Les rôles sensibles ne doivent jamais apparaître comme cibles d’exposition publique."
+
+  - name: direct_app_exposure_conflicts_with_reverse_proxy_preference
+    rule: "If reverse_proxy exists, direct public access to app_server must be treated as exceptional and explicitly justified"
+    severity: high
+    description: "L’exposition directe de l’applicatif doit rester l’exception."
+
+  - name: admin_exposure_without_restrictions_invalid
+    rule: "Any WAN exposure of bastion or admin interface without hardening conditions is invalid"
+    severity: critical
+    description: "Un accès admin exposé sans garde-fous est interdit."
+
+  # =========================
+  # ADMIN PATH CONFLICTS
+  # =========================
+
+  - name: direct_admin_path_conflicts_with_bastion_policy
+    rule: "Any admin flow from user_workstation, reverse_proxy, app_server or wan directly to critical systems conflicts with bastion policy"
+    severity: critical
+    description: "Aucun contournement du bastion ne doit être autorisé."
+
+  - name: firewall_admin_from_non_bastion_invalid
+    rule: "Any admin access to edge_firewall or internal_firewall not originating from bastion is invalid"
+    severity: critical
+    description: "Les firewalls ne doivent être administrés que via bastion."
+
+  - name: soc_admin_from_non_bastion_invalid
+    rule: "Any admin access to wazuh_server or zabbix_server not originating from bastion is invalid"
+    severity: high
+    description: "Les interfaces SOC doivent rester protégées."
+
+  # =========================
+  # ROUTING / TOPOLOGY CONFLICTS
+  # =========================
+
+  - name: host_routing_bypass_conflict
+    rule: "If a host defines direct routes bypassing declared firewall roles, the topology is invalid"
+    severity: critical
+    description: "Aucun hôte ne doit contourner le routage contrôlé."
+
+  - name: interconnect_with_business_traffic_invalid
+    rule: "If application, user or backup business traffic uses interconnect, the topology is invalid"
+    severity: critical
+    description: "Interconnect est réservé aux flux techniques de sync."
+
+  - name: transit_with_user_or_dmz_attached_services_invalid
+    rule: "If transit carries user-facing or DMZ-hosted business services, flag a topology conflict"
+    severity: high
+    description: "Transit ne doit pas devenir un réseau applicatif."
+
+  # =========================
+  # CLUSTER / HA CONFLICTS
+  # =========================
+
+  - name: ha_enabled_without_sync_policy_invalid
+    rule: "If an HA firewall role exists without pfsense_ha and ha_sync_flows, validation fails"
+    severity: critical
+    description: "Le HA sans politique de sync est invalide."
+
+  - name: inconsistent_cluster_membership_invalid
+    rule: "If a cluster role has members with different zone attachments, interfaces or security baselines, validation fails"
+    severity: critical
+    description: "Un cluster incohérent doit être rejeté."
+
+  - name: multi_node_sensitive_roles_without_platform_policy_invalid
+    rule: "Multi-node db_server or ad_server without matching platform policy is invalid"
+    severity: critical
+    description: "Les rôles sensibles multi-nœuds exigent leur policy dédiée."
+
+  # =========================
+  # SERVICE CATALOG CONFLICTS
+  # =========================
+
+  - name: undefined_service_reference_conflict
+    rule: "If a rule references a service not present in service_catalog, validation fails"
+    severity: critical
+    description: "Aucun flow ou deny ne doit référencer un service inconnu."
+
+  - name: undefined_role_reference_conflict
+    rule: "If a rule references a role not present in role catalogs or host policies, validation fails"
+    severity: critical
+    description: "Aucun flow ou deny ne doit référencer un rôle inconnu."
+
+  - name: alias_used_without_declaration_conflict
+    rule: "If a logical alias is used without declaration, validation fails"
+    severity: high
+    description: "Les alias doivent être déclarés explicitement."
+
+  # =========================
+  # FLOW MODEL CONFLICTS
+  # =========================
+
+  - name: contradictory_host_and_zone_policy_warning
+    rule: "If host-level allow requires a path that zone-level policy forbids, mark as conflict requiring explicit exception handling"
+    severity: high
+    description: "Les exceptions doivent être gérées explicitement, pas implicitement."
+
+  - name: sensitive_zone_allow_requires_precise_scope
+    rule: "Any allow toward db, ad, backup or soc using overly broad source scope must be rejected or narrowed"
+    severity: critical
+    description: "Les zones sensibles exigent des allow précis."
+
+  # =========================
+  # VALIDATION META
+  # =========================
+
+  - name: critical_conflicts_block_generation
+    rule: "Any critical conflict must fail validation and block generation"
+    severity: critical
+    description: "Tout conflit critique doit stopper la génération."
+
+  - name: high_conflicts_require_explicit_resolution
+    rule: "Any high severity conflict must be acknowledged and resolved before production use"
+    severity: high
+    description: "Les conflits importants doivent être résolus explicitement."

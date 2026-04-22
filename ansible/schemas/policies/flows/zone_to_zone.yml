@@ -1,0 +1,108 @@
+version: 1
+
+zone_to_zone_flows:
+
+  - name: mgmt_to_infra_admin
+    action: allow
+    src_zone: mgmt
+    dst_zones:
+      - dmz
+      - soc
+      - ad
+      - db
+      - backup
+      - transit
+      - interconnect
+    services:
+      - ssh
+      - https
+      - rdp
+      - winrm
+      - icmp
+    description: "La zone d’administration peut gérer les zones internes via services d’admin autorisés."
+
+  - name: users_to_ad_core
+    action: allow
+    src_zone: users
+    dst_zones:
+      - ad
+    services:
+      - dns
+      - kerberos
+      - ldap
+      - ldaps
+      - smb
+      - ntp
+    description: "Les postes utilisateurs peuvent consommer les services d’identité et de base de l’AD."
+
+  - name: users_to_dmz_apps
+    action: allow
+    src_zone: users
+    dst_zones:
+      - dmz
+    services:
+      - http
+      - https
+    description: "Les utilisateurs peuvent accéder aux applications publiées ou frontales en DMZ."
+
+  - name: dmz_to_ad_limited
+    action: allow
+    src_zone: dmz
+    dst_zones:
+      - ad
+    services:
+      - dns
+      - kerberos
+      - ldap
+      - ldaps
+      - ntp
+    description: "Les serveurs DMZ autorisés peuvent consommer des services d’identité strictement nécessaires."
+
+  - name: dmz_to_db_app_only
+    action: allow
+    src_zone: dmz
+    dst_zones:
+      - db
+    services:
+      - mysql
+      - postgres
+    description: "La DMZ applicative peut accéder à la zone DB uniquement via ports de base de données."
+
+  - name: all_managed_to_soc
+    action: allow
+    src_zone: any_managed
+    dst_zones:
+      - soc
+    services:
+      - zabbix_agent
+      - zabbix_server
+      - wazuh_manager
+      - wazuh_api
+      - logging
+    description: "Les nœuds gérés peuvent envoyer métriques, logs et événements à la zone SOC."
+
+  - name: backup_to_protected_zones
+    action: allow
+    src_zone: backup
+    dst_zones:
+      - db
+      - ad
+      - soc
+      - dmz
+    services:
+      - ssh
+      - rsync
+      - backup_repo
+    description: "La zone backup peut joindre les zones protégées pour sauvegarde et restauration."
+
+  - name: transit_to_infrastructure_only
+    action: allow
+    src_zone: transit
+    dst_zones:
+      - interconnect
+      - soc
+      - ad
+      - db
+    services:
+      - icmp
+    description: "Les flux transit restent minimaux et strictement techniques tant qu’ils ne sont pas affinés ailleurs."

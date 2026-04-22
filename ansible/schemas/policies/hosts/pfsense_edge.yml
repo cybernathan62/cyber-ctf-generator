@@ -1,0 +1,84 @@
+version: 1
+
+host_policy:
+
+  role: edge_firewall
+
+  description: "Firewall de bordure chargé du WAN, du NAT, de la publication contrôlée et du filtrage principal."
+
+  zone_attachments:
+    - wan
+    - mgmt
+    - dmz
+    - transit
+
+  sensitivity: critical
+  infrastructure_role: true
+
+  # =========================
+  # CORE FUNCTIONS
+  # =========================
+
+  allowed_functions:
+    - wan_termination
+    - nat
+    - controlled_port_forwarding
+    - inter_zone_filtering
+    - outbound_filtering
+    - vpn_termination
+    - logging
+
+  description_functions: "Le firewall edge porte le point d’entrée principal et le filtrage périmétrique."
+
+  # =========================
+  # MANAGEMENT
+  # =========================
+
+  admin_only_from:
+    - bastion
+
+  direct_admin_from_wan_forbidden: true
+  direct_admin_from_users_forbidden: true
+  direct_admin_from_dmz_forbidden: true
+
+  description_admin: "L’administration du firewall edge ne doit passer que par le bastion."
+
+  # =========================
+  # EXPOSURE
+  # =========================
+
+  may_publish_services: true
+  controlled_exposure_only: true
+  sensitive_service_exposure_forbidden: true
+
+  description_exposure: "Le firewall edge peut publier des services mais jamais exposer directement des services sensibles."
+
+  # =========================
+  # ROUTING
+  # =========================
+
+  may_route_between_zones: true
+  must_control_default_gateway_paths: true
+  firewall_bypass_forbidden: true
+
+  description_routing: "Le routage inter-zone doit rester sous contrôle du firewall."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  logging_required: true
+  monitoring_required: true
+  config_backup_required: true
+
+  description_monitoring: "Les événements du firewall edge doivent être journalisés, supervisés et sauvegardés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_application_services: true
+  must_not_host_identity_services: true
+  must_not_host_backup_services: true
+
+  description_validation: "Le firewall edge ne doit pas porter de services métiers."

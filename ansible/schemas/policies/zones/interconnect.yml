@@ -1,0 +1,66 @@
+version: 1
+
+zone_policy:
+
+  zone: interconnect
+
+  description: "Réseau technique dédié aux synchronisations HA, cluster et communications internes d’infrastructure."
+
+  trust_level: restricted
+  sensitivity: critical
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  allowed_inbound_from:
+    - edge_firewall_cluster
+    - internal_firewall_cluster
+
+  allowed_outbound_to:
+    - edge_firewall_cluster
+    - internal_firewall_cluster
+
+  description_access: "Le réseau interconnect est réservé aux nœuds participant aux mécanismes HA et sync."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  access_from_wan_forbidden: true
+  access_from_users_forbidden: true
+  access_from_dmz_forbidden: true
+  access_from_mgmt_forbidden: true
+  access_from_standard_servers_forbidden: true
+
+  description_restrictions: "Aucun composant non HA ne doit accéder au réseau interconnect."
+
+  # =========================
+  # NETWORK ROLE
+  # =========================
+
+  used_for_ha_sync: true
+  used_for_cluster_sync: true
+  non_routed_required: true
+  not_for_application_traffic: true
+
+  description_role: "Le réseau interconnect porte uniquement les flux techniques critiques de synchronisation."
+
+  # =========================
+  # SECURITY
+  # =========================
+
+  monitoring_required: true
+  logging_required: true
+  exposure_forbidden: true
+
+  description_security: "Les flux HA doivent être surveillés et ne jamais être exposés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_host_services: true
+  must_not_be_exposed: true
+
+  description_validation: "Aucun service applicatif ou admin classique ne doit être présent sur interconnect."

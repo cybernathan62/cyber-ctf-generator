@@ -1,0 +1,154 @@
+version: 1
+
+monitoring_flows:
+
+  # =========================
+  # ZABBIX (METRICS)
+  # =========================
+
+  - name: servers_to_zabbix_metrics
+    action: allow
+    src_roles:
+      - app_server
+      - db_server
+      - ad_server
+      - backup_server
+      - reverse_proxy
+    dst_roles:
+      - zabbix_server
+    services:
+      - zabbix_agent
+    description: "Les serveurs envoient leurs métriques à Zabbix."
+
+  - name: workstation_to_zabbix_metrics
+    action: allow
+    src_role: user_workstation
+    dst_roles:
+      - zabbix_server
+    services:
+      - zabbix_agent
+    description: "Les postes utilisateurs remontent leurs métriques."
+
+  # =========================
+  # WAZUH (LOGS / SECURITE)
+  # =========================
+
+  - name: servers_to_wazuh_logs
+    action: allow
+    src_roles:
+      - app_server
+      - db_server
+      - ad_server
+      - backup_server
+      - reverse_proxy
+    dst_roles:
+      - wazuh_server
+    services:
+      - wazuh_manager
+    description: "Les serveurs envoient leurs logs et événements de sécurité."
+
+  - name: workstation_to_wazuh_logs
+    action: allow
+    src_role: user_workstation
+    dst_roles:
+      - wazuh_server
+    services:
+      - wazuh_manager
+    description: "Les postes utilisateurs remontent leurs événements de sécurité."
+
+  # =========================
+  # SYSLOG CENTRALISE
+  # =========================
+
+  - name: infra_to_syslog
+    action: allow
+    src_roles:
+      - edge_firewall
+      - edge_firewall_cluster
+      - internal_firewall
+      - internal_firewall_cluster
+    dst_roles:
+      - wazuh_server
+    services:
+      - logging
+    description: "Les équipements réseau envoient leurs logs vers la plateforme centrale."
+
+  # =========================
+  # ZABBIX MANAGEMENT
+  # =========================
+
+  - name: zabbix_to_servers_checks
+    action: allow
+    src_role: zabbix_server
+    dst_roles:
+      - app_server
+      - db_server
+      - ad_server
+      - backup_server
+      - reverse_proxy
+    services:
+      - icmp
+      - ssh
+    description: "Zabbix peut interroger les hôtes pour supervision active."
+
+  # =========================
+  # WAZUH API / DASHBOARD
+  # =========================
+
+  - name: bastion_to_wazuh_dashboard
+    action: allow
+    src_role: bastion
+    dst_roles:
+      - wazuh_server
+    services:
+      - wazuh_dashboard
+      - wazuh_api
+    description: "Accès admin au dashboard et API Wazuh via bastion."
+
+  - name: bastion_to_zabbix_dashboard
+    action: allow
+    src_role: bastion
+    dst_roles:
+      - zabbix_server
+    services:
+      - zabbix_web
+    description: "Accès admin au dashboard Zabbix."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  - name: no_direct_user_to_soc_admin
+    action: deny
+    src_role: user_workstation
+    dst_roles:
+      - wazuh_server
+      - zabbix_server
+    services:
+      - wazuh_api
+      - zabbix_web
+    description: "Les utilisateurs ne doivent pas accéder directement aux interfaces SOC."
+
+  - name: no_dmz_to_soc_admin
+    action: deny
+    src_roles:
+      - reverse_proxy
+      - app_server
+    dst_roles:
+      - wazuh_server
+      - zabbix_server
+    services:
+      - wazuh_api
+      - zabbix_web
+    description: "Pas d’accès admin SOC depuis la DMZ."
+
+  # =========================
+  # CONTRAINTES
+  # =========================
+
+  - name: monitoring_must_be_enabled
+    action: enforce
+    requirement:
+      - monitoring_must_cover_all_nodes
+      - logging_must_be_centralized
+    description: "Tous les nœuds doivent être supervisés et envoyer leurs logs."

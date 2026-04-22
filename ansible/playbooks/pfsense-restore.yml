@@ -1,0 +1,13 @@
+- name: Restore pfSense config
+  hosts: pfsense
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Upload config.xml
+      copy:
+        src: /lab/Backup/config.xml
+        dest: /conf/config.xml
+
+    - name: Reload pfSense config
+      command: /etc/rc.reload_all

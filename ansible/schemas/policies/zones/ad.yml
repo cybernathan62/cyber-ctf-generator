@@ -1,0 +1,66 @@
+version: 1
+
+zone_policy:
+
+  zone: ad
+
+  description: "Zone des services d’identité, annuaire, DNS interne, fichiers et services coeur."
+
+  trust_level: high
+  sensitivity: critical
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  allowed_inbound_from:
+    - mgmt
+    - users
+    - dmz
+    - soc
+
+  allowed_outbound_to:
+    - soc
+    - backup
+
+  description_access: "La zone AD reçoit les flux d’identité nécessaires et ne sort que vers supervision et sauvegarde."
+
+  # =========================
+  # RESTRICTIONS
+  # =========================
+
+  direct_access_from_wan_forbidden: true
+  admin_from_dmz_forbidden: true
+  lateral_movement_restricted: true
+  direct_access_to_mgmt_forbidden: true
+
+  description_restrictions: "Les services d’identité sont critiques et ne doivent jamais être exposés ni administrés depuis la DMZ."
+
+  # =========================
+  # IDENTITY ROLE
+  # =========================
+
+  hosts_identity_services: true
+  hosts_core_internal_services: true
+  centralized_authentication_required: true
+
+  description_identity: "La zone AD porte l’authentification centralisée et les services coeur internes."
+
+  # =========================
+  # MONITORING
+  # =========================
+
+  monitoring_required: true
+  logging_required: true
+  backup_required: true
+
+  description_monitoring: "Les systèmes AD doivent être supervisés, journalisés et sauvegardés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  must_not_be_exposed: true
+  must_not_host_public_services: true
+
+  description_validation: "La zone AD ne doit jamais être exposée ni publier de services publics."

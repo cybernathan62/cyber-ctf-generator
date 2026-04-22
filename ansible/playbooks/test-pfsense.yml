@@ -1,0 +1,11 @@
+- name: Validate pfSense access
+  hosts: pfsense
+  gather_facts: false
+  tasks:
+    - name: Show identity
+      command: id
+      register: whoami_out
+
+    - name: Print identity
+      debug:
+        var: whoami_out.stdout

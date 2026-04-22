@@ -1,0 +1,128 @@
+version: 1
+
+identity_flows:
+
+  # =========================
+  # UTILISATEURS → AD
+  # =========================
+
+  - name: workstation_to_ad_auth
+    action: allow
+    src_role: user_workstation
+    dst_roles:
+      - ad_server
+    services:
+      - dns
+      - kerberos
+      - ldap
+      - ldaps
+      - smb
+      - ntp
+    description: "Les postes utilisateurs utilisent les services d’identité et de base AD."
+
+  # =========================
+  # ADMIN → AD
+  # =========================
+
+  - name: bastion_to_ad_admin
+    action: allow
+    src_role: bastion
+    dst_roles:
+      - ad_server
+    services:
+      - kerberos
+      - ldap
+      - ldaps
+      - winrm
+      - rdp
+    description: "Le bastion administre les services AD."
+
+  # =========================
+  # APPLICATION → AD
+  # =========================
+
+  - name: app_to_ad_auth
+    action: allow
+    src_role: app_server
+    dst_roles:
+      - ad_server
+    services:
+      - kerberos
+      - ldap
+      - ldaps
+      - dns
+    description: "Les applications utilisent l’authentification centralisée."
+
+  # =========================
+  # INFRA → AD (OPTIONNEL)
+  # =========================
+
+  - name: monitoring_to_ad
+    action: allow
+    src_roles:
+      - zabbix_server
+      - wazuh_server
+    dst_roles:
+      - ad_server
+    services:
+      - ldap
+      - ldaps
+    description: "Les outils de supervision peuvent interroger l’AD si nécessaire."
+
+  # =========================
+  # RESTRICTIONS CRITIQUES
+  # =========================
+
+  - name: dmz_to_ad_restricted
+    action: allow
+    src_roles:
+      - reverse_proxy
+      - app_server
+    dst_roles:
+      - ad_server
+    services:
+      - dns
+      - kerberos
+      - ldap
+      - ldaps
+    description: "La DMZ peut consommer uniquement les services d’identité strictement nécessaires."
+
+  - name: internet_to_ad_denied
+    action: deny
+    src_zone: wan
+    dst_roles:
+      - ad_server
+    description: "L’AD ne doit jamais être exposé directement à Internet."
+
+  - name: users_admin_to_ad_denied
+    action: deny
+    src_role: user_workstation
+    dst_roles:
+      - ad_server
+    services:
+      - winrm
+      - rdp
+    description: "Les utilisateurs ne doivent pas administrer l’AD."
+
+  - name: dmz_admin_to_ad_denied
+    action: deny
+    src_roles:
+      - reverse_proxy
+      - app_server
+    dst_roles:
+      - ad_server
+    services:
+      - winrm
+      - rdp
+    description: "Aucune administration AD depuis la DMZ."
+
+  # =========================
+  # CONTRAINTES
+  # =========================
+
+  - name: identity_must_be_centralized
+    action: enforce
+    requirement:
+      - centralized_identity_required
+      - no_local_authentication_for_sensitive_services
+    description: "Tous les services critiques doivent utiliser une identité centralisée."

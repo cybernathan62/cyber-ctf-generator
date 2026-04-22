@@ -1,0 +1,147 @@
+version: 1
+
+deployment_mapping:
+
+  vm_profiles:
+
+    pfsense_small:
+      provider: virtualbox
+      box: cyberctf/pfsense
+      communicator: ssh
+      os_family: freebsd
+      cpus: 2
+      memory: 2048
+      primary_nic_mode: nat
+      default_private_network_mode: intnet
+      synced_folder_disabled: true
+      description: "Profil pfSense standard pour firewall edge ou interne."
+
+    debian_standard:
+      provider: virtualbox
+      box: cyberctf/debian_wazuh
+      communicator: ssh
+      os_family: debian
+      cpus: 2
+      memory: 2048
+      primary_nic_mode: nat
+      default_private_network_mode: intnet
+      synced_folder_disabled: true
+      description: "Profil Debian standard pour bastion, app, DB, AD-like services Linux, backup et supervision."
+
+    debian_heavy:
+      provider: virtualbox
+      box: cyberctf/debian_wazuh
+      communicator: ssh
+      os_family: debian
+      cpus: 4
+      memory: 4096
+      primary_nic_mode: nat
+      default_private_network_mode: intnet
+      synced_folder_disabled: true
+      description: "Profil Debian renforcé pour charges plus lourdes comme Wazuh ou grosses stacks de supervision."
+
+    windows_server_standard:
+      provider: virtualbox
+      box: windows/server
+      communicator: winrm
+      os_family: windows
+      cpus: 2
+      memory: 4096
+      primary_nic_mode: nat
+      default_private_network_mode: intnet
+      synced_folder_disabled: true
+      description: "Profil Windows Server si tu décides plus tard d’avoir un vrai AD Windows."
+
+  role_to_profile:
+
+    edge_firewall: pfsense_small
+    edge_firewall_cluster: pfsense_small
+    internal_firewall: pfsense_small
+    internal_firewall_cluster: pfsense_small
+
+    bastion: debian_standard
+    reverse_proxy: debian_standard
+    app_server: debian_standard
+    db_server: debian_standard
+    backup_server: debian_standard
+    zabbix_server: debian_standard
+
+    wazuh_server: debian_heavy
+
+    ad_server: debian_standard
+
+    user_workstation: debian_standard
+    admin_workstation: debian_standard
+
+  role_bootstrap_defaults:
+
+    edge_firewall:
+      needs_wan: true
+      needs_internal_networks: true
+      bootstrap_host_forward_ssh: true
+
+    edge_firewall_cluster:
+      needs_wan: true
+      needs_internal_networks: true
+      needs_interconnect: true
+      bootstrap_host_forward_ssh: true
+
+    internal_firewall:
+      needs_wan: false
+      needs_internal_networks: true
+      bootstrap_host_forward_ssh: true
+
+    internal_firewall_cluster:
+      needs_wan: false
+      needs_internal_networks: true
+      needs_interconnect: true
+      bootstrap_host_forward_ssh: true
+
+    bastion:
+      needs_wan: false
+      needs_internal_networks: true
+      bootstrap_host_forward_ssh: true
+
+    reverse_proxy:
+      needs_wan: false
+      needs_internal_networks: true
+      bootstrap_host_forward_ssh: true
+
+    app_server:
+      needs_wan: false
+      needs_internal_networks: true
+      bootstrap_host_forward_ssh: true
+
+    db_server:
+      needs_wan: false
+      needs_internal_networks: true
+      bootstrap_host_forward_ssh: true
+
+    ad_server:
+      needs_wan: false
+      needs_internal_networks: true
+      bootstrap_host_forward_ssh: true
+
+    backup_server:
+      needs_wan: false
+      needs_internal_networks: true
+      bootstrap_host_forward_ssh: true
+
+    zabbix_server:
+      needs_wan: false
+      needs_internal_networks: true
+      bootstrap_host_forward_ssh: true
+
+    wazuh_server:
+      needs_wan: false
+      needs_internal_networks: true
+      bootstrap_host_forward_ssh: true
+
+  generator_defaults:
+
+    hostname_from_instance_name: true
+    disable_default_synced_folder: true
+    insert_key: false
+    autostart: true
+    validate_profile_exists_before_generation: true
+    fail_if_role_has_no_profile: true

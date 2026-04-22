@@ -1,0 +1,56 @@
+version: 1
+
+design_principles:
+
+  segmentation:
+    multi_zone_required: true
+    multi_vm_requires_segmentation: true
+    sensitive_zones_must_be_isolated:
+      - db
+      - ad
+      - backup
+    inter_zone_default_deny: true
+
+  administration:
+    admin_entrypoint_must_be_bastion: true
+    direct_admin_access_from_wan: false
+    management_zone_cannot_be_reached_from_untrusted_zones: true
+    privileged_access_must_be_tracked: true
+
+  exposure:
+    public_services_must_use_controlled_exposure: true
+    direct_exposure_of_internal_services: false
+    exposure_must_be_through:
+      - reverse_proxy
+      - edge_firewall_nat
+
+  communication:
+    explicit_inter_zone_rules_only: true
+    east_west_traffic_restriction: true
+    least_privilege_enforced: true
+    stateful_firewalling_required: true
+
+  identity:
+    centralized_identity_required: true
+    ad_must_not_be_exposed_to_dmz: true
+    ad_must_not_be_exposed_to_wan: true
+
+  data_protection:
+    database_must_be_isolated: true
+    backup_must_be_isolated: true
+    backup_must_not_be_directly_exposed: true
+
+  observability:
+    monitoring_must_cover_all_nodes: true
+    logging_must_be_centralized: true
+    security_events_must_be_collected: true
+
+  high_availability:
+    firewall_ha_supported: true
+    cluster_nodes_must_use_internal_sync: true
+    no_public_access_to_all_cluster_nodes: true
+
+  infrastructure:
+    transit_networks_must_be_isolated: true
+    interconnect_networks_must_be_restricted: true
+    routing_must_be_controlled_by_firewalls: true

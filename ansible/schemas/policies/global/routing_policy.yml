@@ -1,0 +1,90 @@
+version: 1
+
+routing_policy:
+
+  # =========================
+  # PRINCIPES GENERAUX
+  # =========================
+
+  routing_must_be_controlled: true
+  routing_via_firewalls_only: true
+  direct_host_routing_forbidden: true
+
+  description: "Tout le routage doit passer par des équipements de sécurité (firewalls)."
+
+  # =========================
+  # FIREWALL ROUTING ROLE
+  # =========================
+
+  edge_firewall_is_default_gateway: true
+  internal_firewall_controls_sensitive_zones: true
+
+  description_firewall: "Les firewalls sont responsables du routage et de la segmentation."
+
+  # =========================
+  # TRANSIT NETWORK
+  # =========================
+
+  transit_network_required_for_multi_firewall: true
+  transit_network_must_be_isolated: true
+  transit_used_for:
+    - firewall_to_firewall
+    - inter_zone_routing
+
+  description_transit: "Le réseau transit est utilisé uniquement pour interconnexion entre équipements."
+
+  # =========================
+  # INTERCONNECT NETWORK
+  # =========================
+
+  interconnect_network_required_for_ha: true
+  interconnect_must_be_non_routed: true
+  interconnect_usage_restricted: true
+
+  description_interconnect: "Le réseau interconnect est réservé aux flux techniques (HA, sync)."
+
+  # =========================
+  # HOST NETWORK RULES
+  # =========================
+
+  hosts_must_not_define_custom_gateways: true
+  default_gateway_must_point_to_firewall: true
+  static_routes_must_be_controlled: true
+
+  description_hosts: "Les hôtes ne doivent pas contourner le routage centralisé."
+
+  # =========================
+  # DMZ ROUTING
+  # =========================
+
+  dmz_routing_controlled_by_edge_firewall: true
+  dmz_cannot_route_to_internal_directly: true
+
+  description_dmz: "La DMZ ne doit pas établir de routage direct vers les zones internes."
+
+  # =========================
+  # SENSITIVE ZONES ROUTING
+  # =========================
+
+  sensitive_zones_require_internal_firewall: true
+  sensitive_zones_must_not_be_directly_routed_from_edge: true
+
+  description_sensitive: "Les zones critiques doivent être protégées par un firewall interne."
+
+  # =========================
+  # LOOP AND BYPASS PROTECTION
+  # =========================
+
+  routing_loops_must_be_prevented: true
+  firewall_bypass_forbidden: true
+
+  description_loops: "Les chemins réseau doivent être contrôlés et éviter tout contournement."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  routing_paths_must_be_explicit: true
+  unauthorized_routes_must_be_blocked: true
+
+  description_validation: "Tout chemin réseau doit être validé et contrôlé."

@@ -1,0 +1,215 @@
+{
+  "lab_name": "prompt-generated-lab",
+  "lab_id": 5,
+  "generation_mode": "randomized_definition",
+  "rules": {
+    "ip_schema": "10.<lab_id>.<random_vlan_id>.<host_octet_by_firewall_variant_or_random_service_host>",
+    "gateway_strategy": "simple=.1 | ha=VIP .1 | cluster=service/VIP .10 | transit=unique per firewall node",
+    "host_strategy": "random host between .10 and .240 for service VMs",
+    "vlan_range": [
+      10,
+      200
+    ],
+    "host_range": [
+      10,
+      240
+    ],
+    "reserved_hosts": [
+      1,
+      254,
+      255
+    ]
+  },
+  "zone_definitions": [
+    {
+      "network_id": "management-net",
+      "vlan_id": 156,
+      "cidr": "10.5.156.0/24",
+      "gateway": "10.5.156.1",
+      "zone_type": "management"
+    },
+    {
+      "network_id": "dmz-net",
+      "vlan_id": 102,
+      "cidr": "10.5.102.0/24",
+      "gateway": "10.5.102.1",
+      "zone_type": "dmz"
+    },
+    {
+      "network_id": "data-net",
+      "vlan_id": 68,
+      "cidr": "10.5.68.0/24",
+      "gateway": "10.5.68.1",
+      "zone_type": "data"
+    },
+    {
+      "network_id": "soc-net",
+      "vlan_id": 78,
+      "cidr": "10.5.78.0/24",
+      "gateway": "10.5.78.1",
+      "zone_type": "soc"
+    },
+    {
+      "network_id": "core-transit-net",
+      "vlan_id": 62,
+      "cidr": "10.5.62.0/24",
+      "gateway": "10.5.62.1",
+      "zone_type": "transit"
+    }
+  ],
+  "hosts": [
+    {
+      "id": "pfsense-edge-1",
+      "role": "edge_firewall",
+      "profile": "pfsense",
+      "interfaces": [
+        {
+          "name": "wan",
+          "network_id": "edge-wan",
+          "mode": "dhcp"
+        },
+        {
+          "name": "management",
+          "network_id": "management-net",
+          "ip": "10.5.156.1/24",
+          "gateway": null
+        },
+        {
+          "name": "dmz",
+          "network_id": "dmz-net",
+          "ip": "10.5.102.1/24",
+          "gateway": null
+        },
+        {
+          "name": "transit",
+          "network_id": "core-transit-net",
+          "ip": "10.5.62.1/24",
+          "gateway": null
+        }
+      ]
+    },
+    {
+      "id": "pfsense-soc-1",
+      "role": "internal_firewall",
+      "profile": "pfsense",
+      "interfaces": [
+        {
+          "name": "transit",
+          "network_id": "core-transit-net",
+          "ip": "10.5.62.2/24",
+          "gateway": null
+        },
+        {
+          "name": "soc",
+          "network_id": "soc-net",
+          "ip": "10.5.78.1/24",
+          "gateway": null
+        }
+      ]
+    },
+    {
+      "id": "pfsense-data-1",
+      "role": "internal_firewall",
+      "profile": "pfsense",
+      "interfaces": [
+        {
+          "name": "transit",
+          "network_id": "core-transit-net",
+          "ip": "10.5.62.3/24",
+          "gateway": null
+        },
+        {
+          "name": "data",
+          "network_id": "data-net",
+          "ip": "10.5.68.1/24",
+          "gateway": null
+        }
+      ]
+    },
+    {
+      "id": "bastion-1",
+      "role": "bastion",
+      "profile": "debian-wazuh",
+      "interfaces": [
+        {
+          "name": "eth1",
+          "network_id": "management-net",
+          "ip": "10.5.156.42/24",
+          "gateway": "10.5.156.1",
+          "dns": [
+            "1.1.1.1",
+            "8.8.8.8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "reverse-proxy-1",
+      "role": "reverse_proxy",
+      "profile": "debian-wazuh",
+      "interfaces": [
+        {
+          "name": "eth1",
+          "network_id": "dmz-net",
+          "ip": "10.5.102.190/24",
+          "gateway": "10.5.102.1",
+          "dns": [
+            "1.1.1.1",
+            "8.8.8.8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "db-server-1",
+      "role": "db_server",
+      "profile": "debian-wazuh",
+      "interfaces": [
+        {
+          "name": "eth1",
+          "network_id": "data-net",
+          "ip": "10.5.68.206/24",
+          "gateway": "10.5.68.1",
+          "dns": [
+            "1.1.1.1",
+            "8.8.8.8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wazuh-1",
+      "role": "wazuh_server",
+      "profile": "debian-wazuh",
+      "interfaces": [
+        {
+          "name": "eth1",
+          "network_id": "soc-net",
+          "ip": "10.5.78.47/24",
+          "gateway": "10.5.78.1",
+          "dns": [
+            "1.1.1.1",
+            "8.8.8.8"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "zabbix-1",
+      "role": "zabbix_server",
+      "profile": "debian-wazuh",
+      "interfaces": [
+        {
+          "name": "eth1",
+          "network_id": "soc-net",
+          "ip": "10.5.78.115/24",
+          "gateway": "10.5.78.1",
+          "dns": [
+            "1.1.1.1",
+            "8.8.8.8"
+          ]
+        }
+      ]
+    }
+  ]
+}

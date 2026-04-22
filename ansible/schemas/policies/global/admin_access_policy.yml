@@ -1,0 +1,92 @@
+version: 1
+
+admin_access_policy:
+
+  # =========================
+  # PRINCIPES GENERAUX
+  # =========================
+
+  bastion_required_for_all_admin_access: true
+  direct_admin_access_forbidden: true
+
+  description: "Tous les accès administratifs doivent passer par un point de contrôle centralisé."
+
+  # =========================
+  # ENTRY POINT
+  # =========================
+
+  admin_entrypoint:
+    required: bastion
+    alternatives_allowed: false
+
+  description_entrypoint: "Le bastion est le seul point d’entrée autorisé pour l’administration."
+
+  # =========================
+  # AUTHENTICATION
+  # =========================
+
+  strong_authentication_required: true
+  multi_factor_authentication_required: true
+
+  description_auth: "Les accès admin doivent être protégés par une authentification forte."
+
+  # =========================
+  # ACCESS CONTROL
+  # =========================
+
+  least_privilege_for_admins: true
+  role_based_admin_access: true
+  privileged_access_must_be_justified: true
+
+  description_access: "Les droits admin doivent être limités au strict nécessaire."
+
+  # =========================
+  # SESSION CONTROL
+  # =========================
+
+  session_logging_required: true
+  session_recording_recommended: true
+  idle_session_timeout_required: true
+
+  description_session: "Les sessions admin doivent être tracées et contrôlées."
+
+  # =========================
+  # NETWORK RESTRICTIONS
+  # =========================
+
+  admin_access_allowed_zones:
+    - mgmt
+
+  admin_access_forbidden_zones:
+    - wan
+    - dmz
+    - users
+
+  description_network: "Les accès admin doivent provenir uniquement de la zone de management."
+
+  # =========================
+  # FIREWALL ADMIN
+  # =========================
+
+  firewall_admin_restricted: true
+  firewall_admin_only_from_bastion: true
+
+  description_firewall: "Les équipements réseau doivent être administrés uniquement via bastion."
+
+  # =========================
+  # SOC ADMIN
+  # =========================
+
+  soc_admin_restricted: true
+  soc_admin_only_from_bastion: true
+
+  description_soc: "Les outils de supervision et sécurité doivent être protégés."
+
+  # =========================
+  # VALIDATION
+  # =========================
+
+  admin_paths_must_be_explicit: true
+  admin_bypass_forbidden: true
+
+  description_validation: "Aucun accès admin implicite ou contournement ne doit exister."

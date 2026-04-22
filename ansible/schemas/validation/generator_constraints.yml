@@ -1,0 +1,121 @@
+version: 1
+
+generator_constraints:
+
+  # =========================
+  # GENERATION PRECONDITIONS
+  # =========================
+
+  validation_must_pass_before_generation: true
+  missing_required_objects_blocks_generation: true
+  critical_conflicts_block_generation: true
+
+  description_preconditions: "La génération ne doit jamais démarrer si le modèle est invalide."
+
+  # =========================
+  # TOPOLOGY GENERATION
+  # =========================
+
+  topology_must_match_topology_models: true
+  zone_assignment_must_follow_placement_rules: true
+  network_ranges_must_follow_network_defaults: true
+
+  description_topology: "La topologie générée doit respecter les modèles et les règles d’infrastructure."
+
+  # =========================
+  # ROLE TO HOST MAPPING
+  # =========================
+
+  roles_must_map_to_known_vm_profiles: true
+  unknown_roles_must_fail_generation: true
+  role_to_vm_mapping_must_be_deterministic: true
+
+  description_roles: "Chaque rôle doit correspondre à un profil VM connu (Starter Pack)."
+
+  # =========================
+  # NETWORK GENERATION
+  # =========================
+
+  each_zone_must_have_network: true
+  gateways_must_be_assigned_to_firewalls_only: true
+  hosts_must_not_define_custom_gateways: true
+
+  description_network: "Le réseau doit être cohérent et centralisé sur les firewalls."
+
+  # =========================
+  # FIREWALL GENERATION
+  # =========================
+
+  firewall_rules_must_be_generated_from_flows: true
+  deny_rules_must_be_applied_first: true
+  implicit_deny_must_be_enforced: true
+
+  description_firewall: "Les règles firewall doivent refléter exactement les flows et deny."
+
+  # =========================
+  # EXPOSURE GENERATION
+  # =========================
+
+  public_exposure_must_be_explicit: true
+  exposure_must_follow_exposure_policy: true
+  reverse_proxy_should_be_used_when_available: true
+
+  description_exposure: "La publication de services doit être contrôlée et déclarée."
+
+  # =========================
+  # CLUSTER GENERATION
+  # =========================
+
+  cluster_roles_must_generate_multiple_nodes: true
+  cluster_nodes_must_share_same_configuration: true
+  ha_requires_interconnect_network: true
+
+  description_cluster: "Les clusters doivent être cohérents et respecter les policies HA."
+
+  # =========================
+  # SERVICE GENERATION
+  # =========================
+
+  services_must_be_installed_per_role: true
+  only_declared_services_may_be_installed: true
+
+  description_services: "Les services déployés doivent correspondre au catalogue."
+
+  # =========================
+  # SECURITY ENFORCEMENT
+  # =========================
+
+  least_privilege_must_be_enforced: true
+  unauthorized_flows_must_not_be_generated: true
+  deny_overrides_allow_must_be_respected: true
+
+  description_security: "Le generator doit appliquer strictement les règles de sécurité."
+
+  # =========================
+  # NAMING AND CONSISTENCY
+  # =========================
+
+  naming_policy_must_be_enforced: true
+  resource_names_must_be_unique: true
+  generated_objects_must_match_declared_roles: true
+
+  description_naming: "Les noms générés doivent être cohérents et prédictibles."
+
+  # =========================
+  # OUTPUT VALIDATION
+  # =========================
+
+  generated_infrastructure_must_be_reachable: true
+  generated_firewall_rules_must_be_testable: true
+  generated_services_must_be_accessible_as_declared: true
+
+  description_output: "L’infrastructure générée doit être fonctionnelle et testable."
+
+  # =========================
+  # FAIL-SAFE
+  # =========================
+
+  partial_generation_forbidden: true
+  rollback_on_failure_required: true
+
+  description_fail_safe: "En cas d’erreur, le generator doit échouer proprement sans état incohérent."

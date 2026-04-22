@@ -1,0 +1,127 @@
+version: 1
+
+firewall_roles:
+
+  edge_firewall:
+    description: "Firewall en bordure chargé de l’accès WAN, du NAT, de la publication contrôlée et du filtrage principal."
+    default_zone_attachment:
+      - wan
+      - mgmt
+      - dmz
+      - transit
+    supports_high_availability: false
+    capabilities:
+      - wan_termination
+      - nat
+      - port_forwarding
+      - controlled_service_exposure
+      - inter_zone_filtering
+      - outbound_filtering
+      - vpn_termination
+      - logging
+    allowed_management_from:
+      - bastion
+    prohibited_direct_access_from:
+      - users
+      - dmz
+      - wan
+    typical_use_cases:
+      - internet_edge
+      - first_security_boundary
+      - public_service_publication
+
+  edge_firewall_cluster:
+    description: "Cluster HA de firewalls en bordure assurant continuité de service, publication contrôlée et synchronisation d’état."
+    default_zone_attachment:
+      - wan
+      - mgmt
+      - dmz
+      - transit
+      - interconnect
+    supports_high_availability: true
+    capabilities:
+      - wan_termination
+      - nat
+      - port_forwarding
+      - controlled_service_exposure
+      - inter_zone_filtering
+      - outbound_filtering
+      - vpn_termination
+      - logging
+      - state_sync
+      - config_sync
+      - virtual_ip_failover
+    required_platform_policies:
+      - pfsense_ha
+      - firewall_cluster
+    allowed_management_from:
+      - bastion
+    prohibited_direct_access_from:
+      - users
+      - dmz
+      - wan
+    typical_use_cases:
+      - resilient_internet_edge
+      - highly_available_publication
+      - perimeter_failover
+
+  internal_firewall:
+    description: "Firewall interne chargé d’isoler les zones sensibles et de contrôler les flux est-ouest."
+    default_zone_attachment:
+      - transit
+      - soc
+      - ad
+      - db
+      - backup
+      - users
+    supports_high_availability: false
+    capabilities:
+      - east_west_filtering
+      - zone_isolation
+      - protected_zone_routing
+      - logging
+      - selective_service_exposure
+    allowed_management_from:
+      - bastion
+    prohibited_direct_access_from:
+      - dmz
+      - users
+      - wan
+    typical_use_cases:
+      - sensitive_zone_protection
+      - internal_segmentation
+      - lateral_movement_reduction
+
+  internal_firewall_cluster:
+    description: "Cluster HA de firewalls internes pour protéger les zones sensibles avec redondance et synchronisation."
+    default_zone_attachment:
+      - transit
+      - soc
+      - ad
+      - db
+      - backup
+      - users
+      - interconnect
+    supports_high_availability: true
+    capabilities:
+      - east_west_filtering
+      - zone_isolation
+      - protected_zone_routing
+      - logging
+      - selective_service_exposure
+      - state_sync
+      - config_sync
+      - virtual_ip_failover
+    required_platform_policies:
+      - pfsense_ha
+      - firewall_cluster
+    allowed_management_from:
+      - bastion
+    prohibited_direct_access_from:
+      - dmz
+      - users
+      - wan
+    typical_use_cases:
+      - resilient_internal_segmentation
+      - protected_zone_failover
+      - high_availability_east_west_control

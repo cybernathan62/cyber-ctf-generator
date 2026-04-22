@@ -1,0 +1,42 @@
+all:
+  hosts:
+    pfsense-edge-1:
+      ansible_user: admin
+      role: edge_firewall
+      zone: edge
+      profile: pfsense
+    pfsense-edge-2:
+      ansible_user: admin
+      role: edge_firewall
+      zone: edge
+      profile: pfsense
+    pfsense-internal-1:
+      ansible_user: admin
+      role: internal_firewall
+      zone: core
+      profile: pfsense
+    bastion-1:
+      ansible_user: vagrant
+      role: bastion
+      zone: management
+      profile: debian-base
+    reverse-proxy-1:
+      ansible_user: vagrant
+      role: reverse_proxy
+      zone: dmz
+      profile: debian-base
+    db-server-1:
+      ansible_user: vagrant
+      role: db_server
+      zone: data
+      profile: debian-base
+    wazuh-1:
+      ansible_user: vagrant
+      role: wazuh_server
+      zone: soc
+      profile: debian-wazuh
+    zabbix-1:
+      ansible_user: vagrant
+      role: zabbix_server
+      zone: soc
+      profile: debian-base

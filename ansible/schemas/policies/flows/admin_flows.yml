@@ -1,0 +1,97 @@
+version: 1
+
+admin_flows:
+
+  # =========================
+  # ADMIN WORKSTATION
+  # =========================
+
+  - name: admin_ws_to_bastion
+    action: allow
+    src_role: admin_workstation
+    dst_roles:
+      - bastion
+    services:
+      - ssh
+      - rdp
+      - https
+    description: "Les postes admin accèdent uniquement au bastion."
+
+  - name: admin_ws_direct_to_servers_denied
+    action: deny
+    src_role: admin_workstation
+    dst_roles:
+      - ad_server
+      - db_server
+      - app_server
+      - reverse_proxy
+      - backup_server
+      - wazuh_server
+      - zabbix_server
+      - edge_firewall
+      - edge_firewall_cluster
+      - internal_firewall
+      - internal_firewall_cluster
+    description: "Interdiction d’accès direct des postes admin vers l’infra."
+
+  # =========================
+  # BASTION
+  # =========================
+
+  - name: bastion_to_all_admin
+    action: allow
+    src_role: bastion
+    dst_roles:
+      - ad_server
+      - db_server
+      - app_server
+      - reverse_proxy
+      - backup_server
+      - wazuh_server
+      - zabbix_server
+      - edge_firewall
+      - edge_firewall_cluster
+      - internal_firewall
+      - internal_firewall_cluster
+    services:
+      - ssh
+      - rdp
+      - winrm
+      - https
+    description: "Le bastion administre toute l’infrastructure."
+
+  # =========================
+  # RESTRICTIONS CRITIQUES
+  # =========================
+
+  - name: no_admin_from_users
+    action: deny
+    src_role: user_workstation
+    dst_roles:
+      - ad_server
+      - db_server
+      - edge_firewall
+      - internal_firewall
+    description: "Les postes utilisateurs ne peuvent jamais administrer l’infrastructure."
+
+  - name: no_admin_from_dmz
+    action: deny
+    src_role: reverse_proxy
+    dst_roles:
+      - ad_server
+      - db_server
+      - edge_firewall
+      - internal_firewall
+    description: "Aucun accès admin depuis la DMZ."
+
+  # =========================
+  # OPTIONAL HARDENING
+  # =========================
+
+  - name: bastion_admin_logging
+    action: enforce
+    src_role: bastion
+    requirement:
+      - session_logging
+      - privileged_access_tracking
+    description: "Toutes les sessions admin doivent être tracées."
