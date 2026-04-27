@@ -19,8 +19,11 @@ type NetworkPlanHost = {
   role: string;
   profile: string;
   interfaces?: Array<{
+    name?: string;
     network_id: string;
     ip?: string;
+    mode?: string;
+    gateway?: string | null;
   }>;
 };
 
@@ -32,11 +35,10 @@ export class LabGeneratorService {
   public generateLab(input: GenerateLabInput) {
     const { outputDir, ...model } = input;
 
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
+    fs.mkdirSync(outputDir, { recursive: true });
 
     const networkPlanPath = path.join(process.cwd(), "outputs", "network-plan.json");
+
     if (!fs.existsSync(networkPlanPath)) {
       throw new Error(`network-plan.json introuvable: ${networkPlanPath}`);
     }
@@ -208,10 +210,32 @@ export class LabGeneratorService {
   private buildNetworkBlock(ref: string, vm: GeneratedInstance): string {
     return vm.nics
       .filter((nic) => nic.networkId !== "edge-wan")
+      .filter((nic) => !(vm.id === "pfsense-edge-1" && nic.networkId === "transit-edge-data-net"))
       .map((nic) => {
         return `    ${ref}.vm.network "private_network", virtualbox__intnet: "${nic.networkId}", auto_config: false`;
       })
       .join("\n");
+  }
+
+  private buildProviderExtra(vm: GeneratedInstance): string {
+    if (vm.id !== "pfsense-edge-1") {
+      return "";
+    }
+
+    const hasTransitData = vm.nics.some(
+      (nic) => nic.networkId === "transit-edge-data-net"
+    );
+
+    if (!hasTransitData) {
+      return "";
+    }
+
+    return `
+      # NIC5 VirtualBox : non visible dans la GUI classique, mais actif via VBoxManage
+      vb.customize ["modifyvm", :id, "--nic5", "intnet"]
+      vb.customize ["modifyvm", :id, "--intnet5", "transit-edge-data-net"]
+      vb.customize ["modifyvm", :id, "--nictype5", "82540EM"]
+      vb.customize ["modifyvm", :id, "--cableconnected5", "on"]`;
   }
 
   private buildSshBlock(ref: string, vm: GeneratedInstance): string {
@@ -235,6 +259,14 @@ export class LabGeneratorService {
     ${ref}.ssh.keys_only = true`;
   }
 
+  private buildHostnameLine(ref: string, vm: GeneratedInstance): string {
+    if (this.isPfSense(vm)) {
+      return "";
+    }
+
+    return `    ${ref}.vm.hostname = "${vm.hostname ?? vm.id}"`;
+  }
+
   private generateVagrantfile(instances: GeneratedInstance[]): string {
     const vmBlocks = instances
       .map((vm) => {
@@ -244,10 +276,13 @@ export class LabGeneratorService {
         const box = this.resolveBox(vm);
         const cpu = this.resolveCpu(vm);
         const memory = this.resolveMemory(vm);
+        const providerExtra = this.buildProviderExtra(vm);
+        const hostnameLine = this.buildHostnameLine(ref, vm);
 
         return `
   config.vm.define "${vm.id}" do |${ref}|
     ${ref}.vm.box = "${box}"
+${hostnameLine}
 ${ssh}
 
 ${networks}
@@ -256,7 +291,7 @@ ${networks}
       vb.name = "${vm.id}"
       vb.cpus = ${cpu}
       vb.memory = ${memory}
-      vb.gui = false
+      vb.gui = false${providerExtra}
     end
   end
 `;

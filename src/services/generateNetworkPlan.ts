@@ -1,683 +1,409 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import {
-  LabDefinition,
-  RequestedRole,
-  RoleType,
-  RoleVariant,
-  ZoneType
-} from "./type.js";
+import { LabDefinition, NetworkPlanHost } from "./type.js";
 
-type ZoneDefinition = {
-  network_id: string;
-  vlan_id: number;
-  cidr: string;
-  gateway: string;
-  zone_type: string;
-};
-
-type HostInterface = {
-  name: string;
-  network_id: string;
-  ip?: string;
-  gateway?: string | null;
-  dns?: string[];
-  mode?: "dhcp";
-};
-
-type HostEntry = {
-  id: string;
-  role: string;
-  profile: string;
-  interfaces: HostInterface[];
-};
-
-export type NetworkPlan = {
-  lab_name: string;
-  lab_id: number;
-  generation_mode: "randomized_definition";
-  rules: {
-    ip_schema: string;
-    gateway_strategy: string;
-    host_strategy: string;
-    vlan_range: [number, number];
-    host_range: [number, number];
-    reserved_hosts: number[];
-  };
-  zone_definitions: ZoneDefinition[];
-  hosts: HostEntry[];
-};
-
-const RESERVED_HOSTS = new Set([1, 254, 255]);
-const HOST_MIN = 10;
-const HOST_MAX = 240;
-const VLAN_MIN = 10;
-const VLAN_MAX = 200;
-const DNS_DEFAULT = ["1.1.1.1", "8.8.8.8"];
-
-function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+function randomVlan(used: Set<number>): number {
+  let vlan = 0;
+  do {
+    vlan = Math.floor(Math.random() * 191) + 10;
+  } while (used.has(vlan));
+  used.add(vlan);
+  return vlan;
 }
 
-function pickUniqueLabId(): number {
-  return randomInt(1, 5);
+function cidr(labId: number, vlan: number, prefix = 24): string {
+  return `10.${labId}.${vlan}.0/${prefix}`;
 }
 
-function pickUniqueVlan(usedVlans: Set<number>): number {
-  while (true) {
-    const vlan = randomInt(VLAN_MIN, VLAN_MAX);
-    if (!usedVlans.has(vlan)) {
-      usedVlans.add(vlan);
-      return vlan;
-    }
-  }
+function ip(labId: number, vlan: number, host: number, prefix: number): string {
+  return `10.${labId}.${vlan}.${host}/${prefix}`;
 }
 
-function cidrFromLabAndVlan(labId: number, vlanId: number): string {
-  return `10.${labId}.${vlanId}.0/24`;
+function gateway(labId: number, vlan: number): string {
+  return `10.${labId}.${vlan}.1`;
 }
 
-function gatewayFromLabAndVlan(labId: number, vlanId: number, hostOctet: number): string {
-  return `10.${labId}.${vlanId}.${hostOctet}`;
+function randomHost(usedHosts: Set<number>): number {
+  let host = 0;
+  do {
+    host = Math.floor(Math.random() * 231) + 10;
+  } while (usedHosts.has(host));
+  usedHosts.add(host);
+  return host;
 }
 
-function hostIpFromLabVlanHost(labId: number, vlanId: number, hostId: number): string {
-  return `10.${labId}.${vlanId}.${hostId}`;
-}
+export function generateNetworkPlanFromDefinition(
+  labDefinition: LabDefinition,
+  outputDir: string
+) {
+  const roles = labDefinition.required_roles;
 
-function pickUniqueHostIp(labId: number, vlanId: number, usedIps: Set<string>): string {
-  while (true) {
-    const host = randomInt(HOST_MIN, HOST_MAX);
-    if (RESERVED_HOSTS.has(host)) continue;
+  const edgeRole = roles.find((r) => r.role === "edge_firewall");
+  const socFwRole = roles.find(
+    (r) => r.role === "internal_firewall" && r.zone === "soc"
+  );
+  const dataFwRole = roles.find(
+    (r) => r.role === "internal_firewall" && r.zone === "data"
+  );
 
-    const ip = hostIpFromLabVlanHost(labId, vlanId, host);
-    if (!usedIps.has(ip)) {
-      usedIps.add(ip);
-      return ip;
-    }
-  }
-}
+  const wantsEdgeHa = edgeRole?.variant === "ha" && edgeRole.node_count >= 2;
+  const edgeNodeCount = wantsEdgeHa ? 2 : 1;
 
-function reserveIp(ip: string, usedIps: Set<string>): void {
-  if (usedIps.has(ip)) {
-    throw new Error(`IP dupliquée réservée: ${ip}`);
-  }
-  usedIps.add(ip);
-}
+  const wantsSoc = Boolean(socFwRole) || roles.some((r) => r.zone === "soc");
+  const wantsData = Boolean(dataFwRole) || roles.some((r) => r.zone === "data");
+  const wantsDmz = roles.some((r) => r.role === "reverse_proxy");
+  const wantsBastion = roles.some((r) => r.role === "bastion");
 
-function getRolesByType(roles: RequestedRole[], role: RoleType): RequestedRole[] {
-  return roles.filter((r) => r.role === role);
-}
+  const socFwNodeCount =
+    socFwRole?.variant === "ha" ? Math.max(2, socFwRole.node_count) : socFwRole ? 1 : 0;
 
-function hasRoleType(roles: RequestedRole[], role: RoleType): boolean {
-  return roles.some((r) => r.role === role);
-}
+  const dataFwNodeCount =
+    dataFwRole?.variant === "ha" ? Math.max(2, dataFwRole.node_count) : dataFwRole ? 1 : 0;
 
-function networkIdFromZone(zone: ZoneType): string {
-  switch (zone) {
-    case "management":
-      return "management-net";
-    case "dmz":
-      return "dmz-net";
-    case "soc":
-      return "soc-net";
-    case "data":
-      return "data-net";
-    case "ad":
-      return "ad-net";
-    case "transit":
-      return "core-transit-net";
-    case "sync":
-      return "sync-net";
-    case "edge":
-      return "edge-wan";
-    default:
-      return `${zone}-net`;
-  }
-}
-
-function zoneFromNetworkId(networkId: string): ZoneType {
-  switch (networkId) {
-    case "management-net":
-      return "management";
-    case "dmz-net":
-      return "dmz";
-    case "soc-net":
-      return "soc";
-    case "data-net":
-      return "data";
-    case "ad-net":
-      return "ad";
-    case "core-transit-net":
-      return "transit";
-    case "sync-net":
-      return "sync";
-    case "edge-wan":
-      return "edge";
-    default:
-      throw new Error(`networkId non supporté: ${networkId}`);
-  }
-}
-
-function zoneTypeFromNetworkId(networkId: string): string {
-  switch (networkId) {
-    case "management-net":
-      return "management";
-    case "dmz-net":
-      return "dmz";
-    case "soc-net":
-      return "soc";
-    case "data-net":
-      return "data";
-    case "ad-net":
-      return "ad";
-    case "core-transit-net":
-      return "transit";
-    case "sync-net":
-      return "sync";
-    case "edge-wan":
-      return "wan";
-    default:
-      return "internal";
-  }
-}
-
-function getTotalNodes(requested: RequestedRole): number {
-  return requested.count * requested.node_count;
-}
-
-function validateFirewallVariants(roles: RequestedRole[]): void {
-  for (const requested of roles) {
-    if (requested.role !== "edge_firewall" && requested.role !== "internal_firewall") {
-      continue;
-    }
-
-    const totalNodes = getTotalNodes(requested);
-
-    if (requested.variant === "simple" && totalNodes !== 1) {
-      throw new Error(
-        `${requested.role} (${requested.zone}) en variant simple doit avoir exactement 1 nœud. Reçu: ${totalNodes}`
-      );
-    }
-
-    if (requested.variant === "ha" && totalNodes !== 2) {
-      throw new Error(
-        `${requested.role} (${requested.zone}) en variant ha doit avoir exactement 2 nœuds. Reçu: ${totalNodes}`
-      );
-    }
-
-    if (requested.variant === "cluster" && totalNodes < 3) {
-      throw new Error(
-        `${requested.role} (${requested.zone}) en variant cluster doit avoir au moins 3 nœuds. Reçu: ${totalNodes}`
-      );
-    }
-  }
-}
-
-function isServiceZoneNetworkId(networkId: string): boolean {
-  return [
-    "management-net",
-    "dmz-net",
-    "soc-net",
-    "data-net",
-    "ad-net"
-  ].includes(networkId);
-}
-
-function getServiceZoneNetworkIds(roles: RequestedRole[]): string[] {
-  const networks = new Set<string>();
-
-  for (const requested of roles) {
-    if (requested.role === "edge_firewall" || requested.role === "internal_firewall") {
-      continue;
-    }
-
-    if (requested.zone === "edge" || requested.zone === "transit" || requested.zone === "sync") {
-      continue;
-    }
-
-    networks.add(networkIdFromZone(requested.zone));
-  }
-
-  return [...networks];
-}
-
-function getEdgeFirewallRequest(roles: RequestedRole[]): RequestedRole | undefined {
-  return getRolesByType(roles, "edge_firewall")[0];
-}
-
-function getInternalFirewallForZone(
-  roles: RequestedRole[],
-  zone: ZoneType
-): RequestedRole | undefined {
-  return getRolesByType(roles, "internal_firewall").find((r) => r.zone === zone);
-}
-
-function getServingFirewallForNetworkId(
-  roles: RequestedRole[],
-  networkId: string
-): RequestedRole | undefined {
-  const zone = zoneFromNetworkId(networkId);
-
-  if (zone === "management" || zone === "dmz") {
-    return getEdgeFirewallRequest(roles);
-  }
-
-  if (zone === "soc" || zone === "data" || zone === "ad") {
-    return getInternalFirewallForZone(roles, zone) ?? getEdgeFirewallRequest(roles);
-  }
-
-  return undefined;
-}
-
-function getGatewayOctetForVariant(variant: RoleVariant): number {
-  switch (variant) {
-    case "simple":
-      return 1;
-    case "ha":
-      return 1;
-    case "cluster":
-      return 10;
-    default:
-      return 1;
-  }
-}
-
-function getZoneNodeOctetForVariant(variant: RoleVariant, nodeIndex: number): number {
-  switch (variant) {
-    case "simple":
-      return 1;
-    case "ha":
-      return nodeIndex + 1; // 1=>2, 2=>3
-    case "cluster":
-      return 10 + nodeIndex; // 1=>11, 2=>12, 3=>13
-    default:
-      return 1;
-  }
-}
-
-function buildRequiredZones(roles: RequestedRole[]): string[] {
-  const zones = new Set<string>();
-
-  if (hasRoleType(roles, "edge_firewall")) {
-    zones.add("edge-wan");
-  }
-
-  const serviceZoneNetworkIds = getServiceZoneNetworkIds(roles);
-  for (const networkId of serviceZoneNetworkIds) {
-    zones.add(networkId);
-  }
-
-  if (hasRoleType(roles, "internal_firewall")) {
-    zones.add("core-transit-net");
-  }
-
-  return [...zones];
-}
-
-function buildZoneDefinitions(
-  labId: number,
-  zones: string[],
-  roles: RequestedRole[]
-): ZoneDefinition[] {
+  const labId = Math.floor(Math.random() * 9) + 1;
   const usedVlans = new Set<number>();
-  const result: ZoneDefinition[] = [];
 
-  for (const zone of zones) {
-    if (zone === "edge-wan") continue;
+  const managementVlan = randomVlan(usedVlans);
+  const dmzVlan = wantsDmz ? randomVlan(usedVlans) : null;
+  const socVlan = wantsSoc ? randomVlan(usedVlans) : null;
+  const dataVlan = wantsData ? randomVlan(usedVlans) : null;
+  const transitSocVlan = socFwNodeCount > 0 ? randomVlan(usedVlans) : null;
+  const transitDataVlan = dataFwNodeCount > 0 ? randomVlan(usedVlans) : null;
 
-    const vlanId = pickUniqueVlan(usedVlans);
+  const mgmtGw = gateway(labId, managementVlan);
+  const dmzGw = dmzVlan !== null ? gateway(labId, dmzVlan) : null;
+  const socGw = socVlan !== null ? gateway(labId, socVlan) : null;
+  const dataGw = dataVlan !== null ? gateway(labId, dataVlan) : null;
 
-    let gatewayOctet = 1;
+  const transitSocPrefix = edgeNodeCount + socFwNodeCount > 2 ? 29 : 30;
+  const transitDataPrefix = edgeNodeCount + dataFwNodeCount > 2 ? 29 : 30;
 
-    if (isServiceZoneNetworkId(zone)) {
-      const servingFirewall = getServingFirewallForNetworkId(roles, zone);
-      if (!servingFirewall) {
-        throw new Error(`Aucun firewall porteur trouvé pour la zone ${zone}`);
-      }
-      gatewayOctet = getGatewayOctetForVariant(servingFirewall.variant);
-    } else if (zone === "core-transit-net") {
-      gatewayOctet = 1;
+  const zoneDefinitions: any[] = [
+    {
+      network_id: "management-net",
+      vlan_id: managementVlan,
+      cidr: cidr(labId, managementVlan),
+      gateway: mgmtGw,
+      zone_type: "management"
     }
+  ];
 
-    result.push({
-      network_id: zone,
-      vlan_id: vlanId,
-      cidr: cidrFromLabAndVlan(labId, vlanId),
-      gateway: gatewayFromLabAndVlan(labId, vlanId, gatewayOctet),
-      zone_type: zoneTypeFromNetworkId(zone)
+  if (wantsDmz && dmzVlan !== null && dmzGw) {
+    zoneDefinitions.push({
+      network_id: "dmz-net",
+      vlan_id: dmzVlan,
+      cidr: cidr(labId, dmzVlan),
+      gateway: dmzGw,
+      zone_type: "dmz"
     });
   }
 
-  return result;
-}
-
-function getZone(zoneDefs: ZoneDefinition[], networkId: string): ZoneDefinition {
-  const zone = zoneDefs.find((z) => z.network_id === networkId);
-  if (!zone) {
-    throw new Error(`Zone introuvable: ${networkId}`);
+  if (wantsSoc && socVlan !== null && socGw) {
+    zoneDefinitions.push({
+      network_id: "soc-net",
+      vlan_id: socVlan,
+      cidr: cidr(labId, socVlan),
+      gateway: socGw,
+      zone_type: "soc"
+    });
   }
-  return zone;
-}
 
-function buildInstanceId(
-  role: RoleType,
-  zone: ZoneType,
-  nodeIndex: number,
-  totalNodes: number
-): string {
-  switch (role) {
-    case "edge_firewall":
-      return totalNodes > 1 ? `pfsense-edge-${nodeIndex}` : "pfsense-edge-1";
-
-    case "internal_firewall":
-      if (zone === "soc") {
-        return totalNodes > 1 ? `pfsense-soc-${nodeIndex}` : "pfsense-soc-1";
-      }
-      if (zone === "data") {
-        return totalNodes > 1 ? `pfsense-data-${nodeIndex}` : "pfsense-data-1";
-      }
-      if (zone === "ad") {
-        return totalNodes > 1 ? `pfsense-ad-${nodeIndex}` : "pfsense-ad-1";
-      }
-      return totalNodes > 1
-        ? `pfsense-internal-${nodeIndex}`
-        : "pfsense-internal-1";
-
-    case "bastion":
-      return totalNodes > 1 ? `bastion-${nodeIndex}` : "bastion-1";
-
-    case "reverse_proxy":
-      return totalNodes > 1 ? `reverse-proxy-${nodeIndex}` : "reverse-proxy-1";
-
-    case "wazuh_server":
-      return totalNodes > 1 ? `wazuh-${nodeIndex}` : "wazuh-1";
-
-    case "zabbix_server":
-      return totalNodes > 1 ? `zabbix-${nodeIndex}` : "zabbix-1";
-
-    case "db_server":
-      return totalNodes > 1 ? `db-server-${nodeIndex}` : "db-server-1";
-
-    case "windows_server":
-      return totalNodes > 1 ? `windows-server-${nodeIndex}` : "windows-server-1";
-
-    default:
-      return `${role}-${nodeIndex}`;
+  if (wantsData && dataVlan !== null && dataGw) {
+    zoneDefinitions.push({
+      network_id: "data-net",
+      vlan_id: dataVlan,
+      cidr: cidr(labId, dataVlan),
+      gateway: dataGw,
+      zone_type: "data"
+    });
   }
-}
 
-function addServiceHosts(
-  hosts: HostEntry[],
-  usedIps: Set<string>,
-  zoneDefs: ZoneDefinition[],
-  labId: number,
-  requested: RequestedRole
-): void {
-  const networkId = networkIdFromZone(requested.zone);
-  const zone = getZone(zoneDefs, networkId);
-  const totalNodes = getTotalNodes(requested);
+  if (transitSocVlan !== null) {
+    zoneDefinitions.push({
+      network_id: "transit-edge-soc-net",
+      vlan_id: transitSocVlan,
+      cidr: cidr(labId, transitSocVlan, transitSocPrefix),
+      gateway: gateway(labId, transitSocVlan),
+      zone_type: "transit"
+    });
+  }
 
-  for (let i = 1; i <= totalNodes; i++) {
-    const ip = pickUniqueHostIp(labId, zone.vlan_id, usedIps);
+  if (transitDataVlan !== null) {
+    zoneDefinitions.push({
+      network_id: "transit-edge-data-net",
+      vlan_id: transitDataVlan,
+      cidr: cidr(labId, transitDataVlan, transitDataPrefix),
+      gateway: gateway(labId, transitDataVlan),
+      zone_type: "transit"
+    });
+  }
 
+  const hosts: NetworkPlanHost[] = [];
+
+  function buildEdgeInterfaces(edgeIndex: number) {
+    const physicalIndex = wantsEdgeHa ? edgeIndex + 1 : 1;
+
+    const interfaces: any[] = [
+      { name: "wan", network_id: "edge-wan", mode: "dhcp" },
+      {
+        name: "management",
+        network_id: "management-net",
+        ip: ip(labId, managementVlan, physicalIndex, 24),
+        gateway: null
+      }
+    ];
+
+    if (wantsDmz && dmzVlan !== null) {
+      interfaces.push({
+        name: "dmz",
+        network_id: "dmz-net",
+        ip: ip(labId, dmzVlan, physicalIndex, 24),
+        gateway: null
+      });
+    }
+
+    if (transitSocVlan !== null) {
+      interfaces.push({
+        name: "transit_soc",
+        network_id: "transit-edge-soc-net",
+        ip: ip(labId, transitSocVlan, edgeIndex, transitSocPrefix),
+        gateway: null
+      });
+    }
+
+    if (transitDataVlan !== null) {
+      interfaces.push({
+        name: "transit_data",
+        network_id: "transit-edge-data-net",
+        ip: ip(labId, transitDataVlan, edgeIndex, transitDataPrefix),
+        gateway: null
+      });
+    }
+
+    return interfaces;
+  }
+
+  const edgeStaticRoutes: any[] = [];
+
+  if (socFwNodeCount > 0 && socVlan !== null && transitSocVlan !== null) {
+    edgeStaticRoutes.push({
+      name: "route_soc_net",
+      destination: cidr(labId, socVlan),
+      gateway: `10.${labId}.${transitSocVlan}.${edgeNodeCount + 1}`
+    });
+  }
+
+  if (dataFwNodeCount > 0 && dataVlan !== null && transitDataVlan !== null) {
+    edgeStaticRoutes.push({
+      name: "route_data_net",
+      destination: cidr(labId, dataVlan),
+      gateway: `10.${labId}.${transitDataVlan}.${edgeNodeCount + 1}`
+    });
+  }
+
+  for (let i = 1; i <= edgeNodeCount; i++) {
     hosts.push({
-      id: buildInstanceId(requested.role, requested.zone, i, totalNodes),
-      role: requested.role,
-      profile: requested.role === "windows_server" ? "windows-server" : "debian-wazuh",
+      id: `pfsense-edge-${i}`,
+      role: "edge_firewall",
+      variant: wantsEdgeHa ? "ha" : "simple",
+      zone: "edge",
+      profile: "pfsense",
+      interfaces: buildEdgeInterfaces(i),
+      static_routes: edgeStaticRoutes
+    });
+  }
+
+  if (socFwNodeCount > 0 && socVlan !== null && socGw && transitSocVlan !== null) {
+    for (let i = 1; i <= socFwNodeCount; i++) {
+      hosts.push({
+        id: `pfsense-soc-${i}`,
+        role: "internal_firewall",
+        variant: socFwNodeCount > 1 ? "ha" : "simple",
+        zone: "soc",
+        profile: "pfsense",
+        interfaces: [
+          {
+            name: "transit",
+            network_id: "transit-edge-soc-net",
+            ip: ip(labId, transitSocVlan, edgeNodeCount + i, transitSocPrefix),
+            gateway: gateway(labId, transitSocVlan)
+          },
+          {
+            name: "soc",
+            network_id: "soc-net",
+            ip: socFwNodeCount > 1 ? ip(labId, socVlan, i + 1, 24) : `${socGw}/24`,
+            gateway: null
+          }
+        ],
+        default_gateway: gateway(labId, transitSocVlan)
+      });
+    }
+  }
+
+  if (dataFwNodeCount > 0 && dataVlan !== null && dataGw && transitDataVlan !== null) {
+    for (let i = 1; i <= dataFwNodeCount; i++) {
+      hosts.push({
+        id: `pfsense-data-${i}`,
+        role: "internal_firewall",
+        variant: dataFwNodeCount > 1 ? "ha" : "simple",
+        zone: "data",
+        profile: "pfsense",
+        interfaces: [
+          {
+            name: "transit",
+            network_id: "transit-edge-data-net",
+            ip: ip(labId, transitDataVlan, edgeNodeCount + i, transitDataPrefix),
+            gateway: gateway(labId, transitDataVlan)
+          },
+          {
+            name: "data",
+            network_id: "data-net",
+            ip: dataFwNodeCount > 1 ? ip(labId, dataVlan, i + 1, 24) : `${dataGw}/24`,
+            gateway: null
+          }
+        ],
+        default_gateway: gateway(labId, transitDataVlan)
+      });
+    }
+  }
+
+  const usedMgmtHosts = new Set<number>([1, 2, 3]);
+  const usedDmzHosts = new Set<number>([1, 2, 3]);
+  const usedSocHosts = new Set<number>([1, 2, 3]);
+  const usedDataHosts = new Set<number>([1, 2, 3]);
+
+  if (wantsBastion) {
+    hosts.push({
+      id: "bastion-1",
+      role: "bastion",
+      variant: "simple",
+      zone: "management",
+      profile: "debian-wazuh",
       interfaces: [
         {
           name: "eth1",
-          network_id: networkId,
-          ip: `${ip}/24`,
-          gateway: zone.gateway,
-          dns: DNS_DEFAULT
+          network_id: "management-net",
+          ip: ip(labId, managementVlan, randomHost(usedMgmtHosts), 24),
+          gateway: mgmtGw,
+          dns: ["1.1.1.1", "8.8.8.8"]
         }
       ]
     });
   }
-}
 
-function buildEdgeAttachedNetworks(
-  roles: RequestedRole[],
-  zoneDefs: ZoneDefinition[]
-): string[] {
-  const attached = new Set<string>();
-  const serviceZoneNetworkIds = getServiceZoneNetworkIds(roles);
-  const internalFirewalls = getRolesByType(roles, "internal_firewall");
-
-  if (internalFirewalls.length === 0) {
-    for (const networkId of serviceZoneNetworkIds) {
-      if (zoneDefs.some((z) => z.network_id === networkId)) {
-        attached.add(networkId);
-      }
-    }
-  } else {
-    for (const networkId of ["management-net", "dmz-net"]) {
-      if (zoneDefs.some((z) => z.network_id === networkId)) {
-        attached.add(networkId);
-      }
-    }
-
-    for (const networkId of serviceZoneNetworkIds) {
-      if (!isServiceZoneNetworkId(networkId)) continue;
-
-      const zone = zoneFromNetworkId(networkId);
-      const coveredByInternal =
-        (zone === "soc" || zone === "data" || zone === "ad") &&
-        internalFirewalls.some((fw) => fw.zone === zone);
-
-      if (!coveredByInternal && zoneDefs.some((z) => z.network_id === networkId)) {
-        attached.add(networkId);
-      }
-    }
-
-    if (zoneDefs.some((z) => z.network_id === "core-transit-net")) {
-      attached.add("core-transit-net");
-    }
-  }
-
-  return [...attached];
-}
-
-function ifaceNameFromNetworkId(networkId: string): string {
-  if (networkId === "management-net") return "management";
-  if (networkId === "dmz-net") return "dmz";
-  if (networkId === "core-transit-net") return "transit";
-  return networkId.replace("-net", "");
-}
-
-function buildHosts(roles: RequestedRole[], zoneDefs: ZoneDefinition[], labId: number): HostEntry[] {
-  const hosts: HostEntry[] = [];
-  const usedIps = new Set<string>();
-  let transitOctetCounter = 1;
-
-  // EDGE FIREWALL
-  for (const requested of getRolesByType(roles, "edge_firewall")) {
-    const totalNodes = getTotalNodes(requested);
-    const edgeAttachedNetworks = buildEdgeAttachedNetworks(roles, zoneDefs);
-
-    for (let i = 1; i <= totalNodes; i++) {
-      const interfaces: HostInterface[] = [
+  if (wantsDmz && dmzVlan !== null && dmzGw) {
+    hosts.push({
+      id: "reverse-proxy-1",
+      role: "reverse_proxy",
+      variant: "simple",
+      zone: "dmz",
+      profile: "debian-wazuh",
+      interfaces: [
         {
-          name: "wan",
-          network_id: "edge-wan",
-          mode: "dhcp"
+          name: "eth1",
+          network_id: "dmz-net",
+          ip: ip(labId, dmzVlan, randomHost(usedDmzHosts), 24),
+          gateway: dmzGw,
+          dns: ["1.1.1.1", "8.8.8.8"]
         }
-      ];
+      ]
+    });
+  }
 
-      for (const networkId of edgeAttachedNetworks) {
-        const zone = zoneDefs.find((z) => z.network_id === networkId);
-        if (!zone) continue;
+  const wazuhRole = roles.find((r) => r.role === "wazuh_server");
+  const wazuhNodes =
+    wazuhRole?.variant === "cluster" ? Math.max(3, wazuhRole.node_count) : wazuhRole ? 1 : 0;
 
-        const hostOctet =
-          networkId === "core-transit-net"
-            ? transitOctetCounter++
-            : getZoneNodeOctetForVariant(requested.variant, i);
-
-        const ip = hostIpFromLabVlanHost(labId, zone.vlan_id, hostOctet);
-        reserveIp(ip, usedIps);
-
-        interfaces.push({
-          name: ifaceNameFromNetworkId(networkId),
-          network_id: networkId,
-          ip: `${ip}/24`,
-          gateway: null
-        });
-      }
-
+  if (wazuhNodes > 0 && socVlan !== null && socGw) {
+    for (let i = 1; i <= wazuhNodes; i++) {
       hosts.push({
-        id: buildInstanceId("edge_firewall", requested.zone, i, totalNodes),
-        role: "edge_firewall",
-        profile: "pfsense",
-        interfaces
+        id: `wazuh-${i}`,
+        role: "wazuh_server",
+        variant: wazuhNodes > 1 ? "cluster" : "simple",
+        zone: "soc",
+        profile: "debian-wazuh",
+        interfaces: [
+          {
+            name: "eth1",
+            network_id: "soc-net",
+            ip: ip(labId, socVlan, randomHost(usedSocHosts), 24),
+            gateway: socGw,
+            dns: ["1.1.1.1", "8.8.8.8"]
+          }
+        ]
       });
     }
   }
 
-  // INTERNAL FIREWALL
-  for (const requested of getRolesByType(roles, "internal_firewall")) {
-    const totalNodes = getTotalNodes(requested);
-    const zoneNetworkId = networkIdFromZone(requested.zone);
+  const zabbixRole = roles.find((r) => r.role === "zabbix_server");
 
-    for (let i = 1; i <= totalNodes; i++) {
-      const interfaces: HostInterface[] = [];
+  if (zabbixRole && socVlan !== null && socGw) {
+    hosts.push({
+      id: "zabbix-1",
+      role: "zabbix_server",
+      variant: "simple",
+      zone: "soc",
+      profile: "debian-wazuh",
+      interfaces: [
+        {
+          name: "eth1",
+          network_id: "soc-net",
+          ip: ip(labId, socVlan, randomHost(usedSocHosts), 24),
+          gateway: socGw,
+          dns: ["1.1.1.1", "8.8.8.8"]
+        }
+      ]
+    });
+  }
 
-      const transitZone = zoneDefs.find((z) => z.network_id === "core-transit-net");
-      if (transitZone) {
-        const transitIp = hostIpFromLabVlanHost(labId, transitZone.vlan_id, transitOctetCounter++);
-        reserveIp(transitIp, usedIps);
+  const dbRole = roles.find((r) => r.role === "db_server");
+  const dbNodes =
+    dbRole?.variant === "cluster" ? Math.max(2, dbRole.node_count) : dbRole ? 1 : 0;
 
-        interfaces.push({
-          name: "transit",
-          network_id: "core-transit-net",
-          ip: `${transitIp}/24`,
-          gateway: null
-        });
-      }
-
-      const zone = zoneDefs.find((z) => z.network_id === zoneNetworkId);
-      if (zone) {
-        const zoneOctet = getZoneNodeOctetForVariant(requested.variant, i);
-        const zoneIp = hostIpFromLabVlanHost(labId, zone.vlan_id, zoneOctet);
-        reserveIp(zoneIp, usedIps);
-
-        interfaces.push({
-          name: requested.zone,
-          network_id: zoneNetworkId,
-          ip: `${zoneIp}/24`,
-          gateway: null
-        });
-      }
-
+  if (dbNodes > 0 && dataVlan !== null && dataGw) {
+    for (let i = 1; i <= dbNodes; i++) {
       hosts.push({
-        id: buildInstanceId("internal_firewall", requested.zone, i, totalNodes),
-        role: "internal_firewall",
-        profile: "pfsense",
-        interfaces
+        id: `db-server-${i}`,
+        role: "db_server",
+        variant: dbNodes > 1 ? "cluster" : "simple",
+        zone: "data",
+        profile: "debian-wazuh",
+        interfaces: [
+          {
+            name: "eth1",
+            network_id: "data-net",
+            ip: ip(labId, dataVlan, randomHost(usedDataHosts), 24),
+            gateway: dataGw,
+            dns: ["1.1.1.1", "8.8.8.8"]
+          }
+        ]
       });
     }
   }
 
-  // SERVICES
-  for (const requested of roles) {
-    if (requested.role === "edge_firewall" || requested.role === "internal_firewall") {
-      continue;
-    }
-    addServiceHosts(hosts, usedIps, zoneDefs, labId, requested);
-  }
-
-  return hosts;
-}
-
-function validatePlan(plan: NetworkPlan): void {
-  const seenCidrs = new Set<string>();
-  const seenVlans = new Set<number>();
-  const seenIps = new Set<string>();
-
-  for (const zone of plan.zone_definitions) {
-    if (seenCidrs.has(zone.cidr)) {
-      throw new Error(`CIDR dupliqué: ${zone.cidr}`);
-    }
-    seenCidrs.add(zone.cidr);
-
-    if (seenVlans.has(zone.vlan_id)) {
-      throw new Error(`VLAN dupliqué: ${zone.vlan_id}`);
-    }
-    seenVlans.add(zone.vlan_id);
-  }
-
-  for (const host of plan.hosts) {
-    for (const iface of host.interfaces) {
-      if (!iface.ip) continue;
-      const ipOnly = iface.ip.split("/")[0];
-
-      if (seenIps.has(ipOnly)) {
-        throw new Error(`IP dupliquée: ${ipOnly}`);
-      }
-      seenIps.add(ipOnly);
-    }
-  }
-}
-
-export function generateNetworkPlanFromDefinition(
-  definition: LabDefinition,
-  outputRoot: string
-): NetworkPlan {
-  const roles = definition.required_roles ?? [];
-
-  if (roles.length === 0) {
-    throw new Error("Aucun rôle trouvé dans lab-definition.json");
-  }
-
-  validateFirewallVariants(roles);
-
-  const labId = pickUniqueLabId();
-  const requiredZones = buildRequiredZones(roles);
-  const zoneDefinitions = buildZoneDefinitions(labId, requiredZones, roles);
-  const hosts = buildHosts(roles, zoneDefinitions, labId);
-
-  const plan: NetworkPlan = {
-    lab_name: definition.name || "prompt-generated-lab",
+  const plan = {
+    lab_name: labDefinition.name,
     lab_id: labId,
-    generation_mode: "randomized_definition",
+    generation_mode: "randomized_definition" as const,
     rules: {
-      ip_schema: "10.<lab_id>.<random_vlan_id>.<host_octet_by_firewall_variant_or_random_service_host>",
-      gateway_strategy: "simple=.1 | ha=VIP .1 | cluster=service/VIP .10 | transit=unique per firewall node",
+      ip_schema: "10.<lab_id>.<random_vlan_id>.<host_octet>",
+      gateway_strategy:
+        "simple=.1 | HA uses .1 as future VIP and .2/.3 as physical firewall IPs",
       host_strategy: "random host between .10 and .240 for service VMs",
-      vlan_range: [VLAN_MIN, VLAN_MAX],
-      host_range: [HOST_MIN, HOST_MAX],
-      reserved_hosts: [...RESERVED_HOSTS]
+      vlan_range: [10, 200] as [number, number],
+      host_range: [10, 240] as [number, number],
+      reserved_hosts: [1, 2, 3, 254, 255]
     },
     zone_definitions: zoneDefinitions,
     hosts
   };
 
-  validatePlan(plan);
-
-  const networkPlanPath = path.join(outputRoot, "network-plan.json");
-  fs.writeFileSync(networkPlanPath, JSON.stringify(plan, null, 2), "utf-8");
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(outputDir, "network-plan.json"),
+    JSON.stringify(plan, null, 2),
+    "utf-8"
+  );
 
   return plan;
-}
-
-function main() {
-  const outputRoot = path.join(process.cwd(), "outputs");
-  const definitionPath = path.join(outputRoot, "lab-definition.json");
-
-  if (!fs.existsSync(definitionPath)) {
-    throw new Error(`Fichier introuvable: ${definitionPath}`);
-  }
-
-  const raw = fs.readFileSync(definitionPath, "utf-8");
-  const definition: LabDefinition = JSON.parse(raw);
-
-  const plan = generateNetworkPlanFromDefinition(definition, outputRoot);
-
-  console.log(`Network plan généré : ${path.join(outputRoot, "network-plan.json")}`);
-  console.log(JSON.stringify(plan, null, 2));
-}
-
-if (process.argv[1] && process.argv[1].includes("generateNetworkPlan.ts")) {
-  main();
 }

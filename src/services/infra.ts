@@ -3,6 +3,8 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { LabGeneratorService } from "./labGenerator.js";
 import { generateNetworkPlanFromDefinition } from "./generateNetworkPlan.js";
+import { patchLivePfSenseConfigs } from "./pfsenseLiveConfigPatcher.js";
+import { patchLiveDebianConfigs } from "./debianLiveConfigPatcher.js";
 import {
   LabDefinition,
   RequestedRole,
@@ -14,16 +16,14 @@ import {
 function parseNumericCount(text: string, keyword: string): number | null {
   const regex = new RegExp(`(\\d+)\\s*${keyword}`, "i");
   const match = text.match(regex);
-  if (match) {
-    return parseInt(match[1], 10);
-  }
-  return null;
+  return match ? parseInt(match[1], 10) : null;
 }
 
 function parseWordCount(text: string, keyword: string): number | null {
   if (text.includes(`trois ${keyword}`)) return 3;
   if (text.includes(`deux ${keyword}`)) return 2;
   if (text.includes(`un ${keyword}`)) return 1;
+  if (text.includes(`une ${keyword}`)) return 1;
   return null;
 }
 
@@ -64,13 +64,9 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
   const text = input.toLowerCase();
   const roles: RequestedRole[] = [];
 
-  // =========================
-  // EDGE FIREWALL
-  // simple par défaut
-  // ha seulement si explicitement demandé
-  // =========================
   const wantsEdge = hasAny(text, [
     "pfsense",
+    "firewall",
     "firewall edge",
     "edge firewall",
     "firewall en entree",
@@ -80,40 +76,72 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
     "edge"
   ]);
 
-  const wantsEdgeHa = hasAny(text, [
-    "pfsense ha",
-    "firewall ha",
-    "edge ha",
-    "firewall edge ha",
-    "firewall en ha",
-    "firewall redondant",
-    "pfsense redondant"
-  ]);
+  const pfsenseCount = parseCount(text, "pfsense", "firewall");
+
+  const mentionsInternalPfSense =
+    text.includes("pfsense interne") ||
+    text.includes("pfsense en interne") ||
+    text.includes("firewall interne") ||
+    text.includes("interne pour une supervision") ||
+    text.includes("segmenter par un pfsense");
+
+  const wantsEdgeCluster =
+    !mentionsInternalPfSense &&
+    (
+      hasAny(text, [
+        "cluster pfsense",
+        "pfsense cluster",
+        "cluster firewall",
+        "firewall cluster",
+        "cluster de pfsense",
+        "cluster de firewall"
+      ]) ||
+      pfsenseCount >= 3
+    );
+
+  const wantsEdgeHa =
+    !mentionsInternalPfSense &&
+    !wantsEdgeCluster &&
+    hasAny(text, [
+      "deux pfsense en ha",
+      "2 pfsense en ha",
+      "pfsense edge ha",
+      "edge ha",
+      "firewall edge ha",
+      "firewall en entree ha",
+      "firewall d'entree ha",
+      "pfsense redondant",
+      "pfsense redondants"
+    ]);
 
   if (wantsEdge) {
     pushRole(
       roles,
       "edge_firewall",
-      wantsEdgeHa ? "ha" : "simple",
+      wantsEdgeCluster ? "cluster" : wantsEdgeHa ? "ha" : "simple",
       "edge",
       1,
-      wantsEdgeHa ? 2 : 1
+      wantsEdgeCluster ? pfsenseCount : wantsEdgeHa ? 2 : 1
     );
   }
 
-  // =========================
-  // INTERNAL FIREWALL SOC
-  // =========================
   const wantsInternalSoc = hasAny(text, [
     "firewall interne soc",
     "firewall soc",
     "interne soc",
+    "pfsense interne",
+    "pfsense en interne",
+    "segmenter par un pfsense",
     "firewall supervision",
     "firewall wazuh",
-    "firewall zabbix"
+    "firewall zabbix",
+    "supervision",
+    "wazuh"
   ]);
 
   const wantsInternalSocHa = hasAny(text, [
+    "pfsense en ha",
+    "pfsense interne ha",
     "firewall interne soc ha",
     "firewall soc ha",
     "interne soc ha",
@@ -131,9 +159,6 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
     );
   }
 
-  // =========================
-  // INTERNAL FIREWALL DATA
-  // =========================
   const wantsInternalData = hasAny(text, [
     "firewall data",
     "firewall db",
@@ -161,48 +186,35 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
     );
   }
 
-  // =========================
-  // BASTION
-  // =========================
   if (text.includes("bastion")) {
     pushRole(roles, "bastion", "simple", "management", 1, 1);
   }
 
-  // =========================
-  // DMZ / reverse proxy
-  // =========================
-  if (
-    hasAny(text, [
-      "dmz",
-      "reverse proxy",
-      "reverse_proxy",
-      "proxy",
-      "web"
-    ])
-  ) {
+  if (hasAny(text, ["dmz", "reverse proxy", "reverse_proxy", "proxy", "web"])) {
     pushRole(roles, "reverse_proxy", "simple", "dmz", 1, 1);
   }
 
-  // =========================
-  // DB
-  // =========================
-  const wantsDb = hasAny(text, [
-    " db ",
-    "database",
-    "base de données",
-    "base de donnees"
-  ]) || text.startsWith("db ") || text.endsWith(" db");
+  const wantsDb =
+    hasAny(text, [" db ", "database", "base de données", "base de donnees"]) ||
+    text.startsWith("db ") ||
+    text.endsWith(" db") ||
+    text.includes(" un db") ||
+    text.includes(" une db");
 
   if (wantsDb) {
     const wantsDbCluster = hasAny(text, [
       "db cluster",
       "database cluster",
+      "cluster db",
+      "cluster database",
       "base de données cluster",
-      "base de donnees cluster"
+      "base de donnees cluster",
+      "cluster base de données",
+      "cluster base de donnees"
     ]);
 
     const nodeCount = wantsDbCluster
-      ? Math.max(2, parseCount(text, "noeud", "nœud", "node", "nodes"))
+      ? Math.max(2, parseCount(text, "db", "database", "noeud", "nœud", "node", "nodes"))
       : 1;
 
     pushRole(
@@ -211,17 +223,18 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
       wantsDbCluster ? "cluster" : "simple",
       "data",
       1,
-      wantsDbCluster ? nodeCount : 1
+      nodeCount
     );
   }
 
-  // =========================
-  // WAZUH
-  // =========================
-  if (text.includes("wazuh")) {
-    const wantsWazuhCluster = text.includes("wazuh cluster");
+  if (text.includes("wazuh") || text.includes("supervision")) {
+    const wantsWazuhCluster =
+      text.includes("wazuh cluster") ||
+      text.includes("cluster wazuh") ||
+      text.includes("cluster de wazuh");
+
     const nodeCount = wantsWazuhCluster
-      ? Math.max(2, parseCount(text, "noeud", "nœud", "node", "nodes"))
+      ? Math.max(3, parseCount(text, "wazuh", "noeud", "nœud", "node", "nodes"))
       : 1;
 
     pushRole(
@@ -230,20 +243,14 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
       wantsWazuhCluster ? "cluster" : "simple",
       "soc",
       1,
-      wantsWazuhCluster ? nodeCount : 1
+      nodeCount
     );
   }
 
-  // =========================
-  // ZABBIX
-  // =========================
   if (text.includes("zabbix")) {
     pushRole(roles, "zabbix_server", "simple", "soc", 1, 1);
   }
 
-  // =========================
-  // WINDOWS SERVER
-  // =========================
   if (
     hasAny(text, [
       "windows server",
@@ -258,12 +265,30 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
   return roles;
 }
 
+function waitSeconds(seconds: number): void {
+  console.log(`\nAttente ${seconds}s...\n`);
+
+  const command = process.platform === "win32" ? "timeout.exe" : "sleep";
+  const args = process.platform === "win32"
+    ? ["/T", String(seconds), "/NOBREAK"]
+    : [String(seconds)];
+
+  const result = spawnSync(command, args, {
+    stdio: "inherit",
+    shell: true
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+}
+
 function main() {
   const userPrompt = process.argv.slice(2).join(" ").trim();
 
   if (!userPrompt) {
     throw new Error(
-      'Exemple: npm run infra -- "je veux une infra avec un pfsense, un bastion, une dmz, un firewall interne soc avec un wazuh et un zabbix, puis un firewall data avec une db"'
+      'Exemple: npm run infra -- "je veux un pfsense avec un bastion segmenter par un pfsense en ha et un cluster wazuh"'
     );
   }
 
@@ -275,11 +300,12 @@ function main() {
 
   const outputRoot = path.join(process.cwd(), "outputs");
   const definitionFile = path.join(outputRoot, "lab-definition.json");
+  const networkPlanFile = path.join(outputRoot, "network-plan.json");
   const generatedLabDir = path.join(outputRoot, "generated-lab");
+  const patchedPfSenseDir = path.join(outputRoot, "pfsense-live-patched");
+  const patchedDebianDir = path.join(outputRoot, "debian-live-patched");
 
-  if (!fs.existsSync(outputRoot)) {
-    fs.mkdirSync(outputRoot, { recursive: true });
-  }
+  fs.mkdirSync(outputRoot, { recursive: true });
 
   const definition: LabDefinition = {
     name: "prompt-generated-lab",
@@ -287,11 +313,7 @@ function main() {
     instances: []
   };
 
-  fs.writeFileSync(
-    definitionFile,
-    JSON.stringify(definition, null, 2),
-    "utf-8"
-  );
+  fs.writeFileSync(definitionFile, JSON.stringify(definition, null, 2), "utf-8");
 
   console.log("Demande du prof :", userPrompt);
   console.log("Lab definition généré :", definitionFile);
@@ -299,10 +321,7 @@ function main() {
 
   generateNetworkPlanFromDefinition(definition, outputRoot);
 
-  console.log(
-    "Network plan généré :",
-    path.join(outputRoot, "network-plan.json")
-  );
+  console.log("Network plan généré :", networkPlanFile);
 
   const generator = new LabGeneratorService();
 
@@ -332,7 +351,21 @@ function main() {
     throw new Error(`vagrant up a échoué avec le code ${upResult.status}`);
   }
 
-  console.log("\nInfra démarrée avec succès.");
+  patchLivePfSenseConfigs(
+    generatedLabDir,
+    networkPlanFile,
+    patchedPfSenseDir
+  );
+
+  waitSeconds(45);
+
+  patchLiveDebianConfigs(
+    generatedLabDir,
+    networkPlanFile,
+    patchedDebianDir
+  );
+
+  console.log("\nInfra démarrée + configs pfSense/Debian live patchées avec succès.");
 }
 
 main();

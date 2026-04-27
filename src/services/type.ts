@@ -8,10 +8,7 @@ export type RoleType =
   | "db_server"
   | "windows_server";
 
-export type RoleVariant =
-  | "simple"
-  | "ha"
-  | "cluster";
+export type RoleVariant = "simple" | "ha" | "cluster";
 
 export type ZoneType =
   | "edge"
@@ -54,21 +51,52 @@ export type GeneratedInstance = {
   nics: GeneratedNic[];
 };
 
-// Réseaux générés
-export type NetworkPurpose = "zone" | "transit" | "sync";
-
-export type GeneratedNetwork = {
-  id: string;
-  purpose: NetworkPurpose;
-  zone: ZoneType;
-  link_name?: string;
-  cidr?: string;
+export type NetworkPlanHostInterface = {
+  name: string;
+  network_id: string;
+  ip?: string;
   gateway?: string | null;
+  dns?: string[];
+  mode?: "dhcp";
 };
 
-export type GeneratedPlan = {
+export type NetworkPlanStaticRoute = {
+  name: string;
+  destination: string;
+  gateway: string;
+};
+
+export type NetworkPlanHost = {
+  id: string;
+  role: RoleType;
+  variant?: RoleVariant;
+  zone?: ZoneType;
+  profile: string;
+  interfaces: NetworkPlanHostInterface[];
+  default_gateway?: string;
+  static_routes?: NetworkPlanStaticRoute[];
+};
+
+export type NetworkPlanZoneDefinition = {
+  network_id: string;
+  vlan_id: number;
+  cidr: string;
+  gateway: string;
+  zone_type: ZoneType | "transit";
+};
+
+export type NetworkPlan = {
   lab_name: string;
   lab_id: number;
-  networks: GeneratedNetwork[];
-  hosts: GeneratedInstance[];
+  generation_mode: "randomized_definition";
+  rules: {
+    ip_schema: string;
+    gateway_strategy: string;
+    host_strategy: string;
+    vlan_range: [number, number];
+    host_range: [number, number];
+    reserved_hosts: number[];
+  };
+  zone_definitions: NetworkPlanZoneDefinition[];
+  hosts: NetworkPlanHost[];
 };
