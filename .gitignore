@@ -34,6 +34,7 @@ passbolt-recovery-kit.txt
 keys/**/*.rsa
 keys/**/*.key
 keys/**/*.pem
+outputs/ssh-access.local.json
 
 # Allow public keys
 !keys/**/*.pub

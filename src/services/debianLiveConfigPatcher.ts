@@ -10,49 +10,67 @@ type SshConfig = {
   identityFile: string;
 };
 
-function run(
-  command: string,
-  args: string[],
-  cwd: string,
-  label: string,
-  allowFailure = false
-): string {
+function sleepSeconds(seconds: number): void {
+  const command = process.platform === "win32" ? "timeout.exe" : "sleep";
+  const args = process.platform === "win32"
+    ? ["/T", String(seconds), "/NOBREAK"]
+    : [String(seconds)];
+
+  spawnSync(command, args, { stdio: "inherit", shell: true });
+}
+
+function run(command: string, args: string[], cwd: string, label: string, allowFailure = false): string {
   console.log(`\n[Debian patch] ${label}`);
   console.log(`${command} ${args.join(" ")}`);
 
-  const result = spawnSync(command, args, {
-    cwd,
-    encoding: "utf-8",
-    shell: false
-  });
+  const maxAttempts = 5;
 
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stderr.write(result.stderr);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const result = spawnSync(command, args, {
+      cwd,
+      encoding: "utf-8",
+      shell: false,
+      maxBuffer: 1024 * 1024 * 50
+    });
 
-  if (result.error) throw result.error;
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
 
-  if (!allowFailure && result.status !== 0) {
-    throw new Error(`[Debian patch] Échec ${label} avec code ${result.status}`);
+    if (!result.error && result.status === 0) return result.stdout ?? "";
+
+    const stderr = String(result.stderr ?? "");
+    const retryable =
+      result.status === 255 ||
+      stderr.includes("Connection closed") ||
+      stderr.includes("Connection reset") ||
+      stderr.includes("No route to host") ||
+      stderr.includes("Connection timed out");
+
+    if (retryable && attempt < maxAttempts) {
+      console.log(`[Debian patch] SSH/SCP pas prêt, retry ${attempt}/${maxAttempts} dans 10s...`);
+      sleepSeconds(10);
+      continue;
+    }
+
+    if (result.error) throw result.error;
+
+    if (!allowFailure && result.status !== 0) {
+      throw new Error(`[Debian patch] Échec ${label} avec code ${result.status}`);
+    }
+
+    return result.stdout ?? "";
   }
 
-  return result.stdout ?? "";
+  return "";
 }
 
 function getVagrantSshConfig(generatedLabDir: string, vmName: string): SshConfig {
   const command = process.platform === "win32" ? "vagrant.exe" : "vagrant";
 
-  const raw = run(
-    command,
-    ["ssh-config", vmName],
-    generatedLabDir,
-    `Lecture ssh-config ${vmName}`
-  );
+  const raw = run(command, ["ssh-config", vmName], generatedLabDir, `Lecture ssh-config ${vmName}`);
 
   const get = (key: string): string => {
-    const line = raw
-      .split(/\r?\n/)
-      .find((l) => l.trim().toLowerCase().startsWith(key.toLowerCase()));
-
+    const line = raw.split(/\r?\n/).find((l) => l.trim().toLowerCase().startsWith(key.toLowerCase()));
     if (!line) throw new Error(`ssh-config: clé manquante ${key} pour ${vmName}`);
 
     return line.trim().replace(new RegExp(`^${key}\\s+`, "i"), "").replace(/^"|"$/g, "");
@@ -68,16 +86,11 @@ function getVagrantSshConfig(generatedLabDir: string, vmName: string): SshConfig
 
 function sshArgs(cfg: SshConfig, remoteCommand: string): string[] {
   return [
-    "-i",
-    cfg.identityFile,
-    "-p",
-    cfg.port,
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "UserKnownHostsFile=/dev/null",
-    "-o",
-    "LogLevel=ERROR",
+    "-i", cfg.identityFile,
+    "-p", cfg.port,
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "LogLevel=ERROR",
     `${cfg.user}@${cfg.hostName}`,
     remoteCommand
   ];
@@ -85,16 +98,11 @@ function sshArgs(cfg: SshConfig, remoteCommand: string): string[] {
 
 function scpArgs(cfg: SshConfig, localPath: string, remotePath: string): string[] {
   return [
-    "-i",
-    cfg.identityFile,
-    "-P",
-    cfg.port,
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "UserKnownHostsFile=/dev/null",
-    "-o",
-    "LogLevel=ERROR",
+    "-i", cfg.identityFile,
+    "-P", cfg.port,
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "LogLevel=ERROR",
     localPath,
     `${cfg.user}@${cfg.hostName}:${remotePath}`
   ];
@@ -112,27 +120,12 @@ function cidrOnly(ip: string): number {
 
 function cidrToNetmask(cidr: number): string {
   const mask = (0xffffffff << (32 - cidr)) >>> 0;
-
-  return [
-    (mask >>> 24) & 255,
-    (mask >>> 16) & 255,
-    (mask >>> 8) & 255,
-    mask & 255
-  ].join(".");
-}
-
-function networkAddress(ip: string): string {
-  const [a, b, c] = ipOnly(ip).split(".");
-  return `${a}.${b}.${c}.0/24`;
+  return [(mask >>> 24) & 255, (mask >>> 16) & 255, (mask >>> 8) & 255, mask & 255].join(".");
 }
 
 function findPrimaryInternalInterface(host: NetworkPlanHost): any {
   const iface = host.interfaces.find((i: any) => i.name !== "wan" && i.ip);
-
-  if (!iface) {
-    throw new Error(`Aucune interface interne avec IP trouvée pour ${host.id}`);
-  }
-
+  if (!iface) throw new Error(`Aucune interface interne avec IP trouvée pour ${host.id}`);
   return iface;
 }
 
@@ -143,66 +136,39 @@ function findGatewayForHost(host: NetworkPlanHost): string {
 
   const ip = ipOnly(iface.ip);
   const [a, b, c] = ip.split(".");
-
   return `${a}.${b}.${c}.1`;
 }
 
-function generateStaticRoutes(host: NetworkPlanHost, plan: NetworkPlan): string {
-  const currentIface = findPrimaryInternalInterface(host);
-  const currentNetwork = networkAddress(currentIface.ip);
-  const gateway = findGatewayForHost(host);
-
-  const networks = new Set<string>();
-
-  for (const other of plan.hosts) {
-    if (other.id === host.id) continue;
-    if (other.profile === "pfsense") continue;
-
-    for (const iface of other.interfaces as any[]) {
-      if (!iface.ip) continue;
-
-      const net = networkAddress(iface.ip);
-
-      if (net !== currentNetwork) {
-        networks.add(net);
-      }
-    }
-  }
-
-  if (networks.size === 0) return "";
-
-  let routes = "";
-
-  for (const net of networks) {
-    routes += `    post-up ip route add ${net} via ${gateway} dev enp0s8 || true\n`;
-    routes += `    post-down ip route del ${net} via ${gateway} dev enp0s8 || true\n`;
-  }
-
-  return routes;
-}
-
-function generateInterfacesFile(host: NetworkPlanHost, plan: NetworkPlan): string {
+function generateInterfacesFile(host: NetworkPlanHost): string {
   const iface = findPrimaryInternalInterface(host);
   const address = ipOnly(iface.ip);
   const netmask = cidrToNetmask(cidrOnly(iface.ip));
-  const routes = generateStaticRoutes(host, plan);
+  const gateway = findGatewayForHost(host);
 
   return `# Generated by Cyber CTF Generator
 # ${host.id}
-# enp0s3 = NAT Vagrant DHCP
-# enp0s8 = réseau interne lab statique
+# enp0s3 = NAT Vagrant DHCP pour SSH/provisioning uniquement
+# enp0s8 = réseau interne lab avec gateway + DNS pfSense
 
 auto lo
 iface lo inet loopback
 
 allow-hotplug enp0s3
 iface enp0s3 inet dhcp
+    post-up ip route del default dev enp0s3 || true
+    post-up ip route del default via 10.0.2.2 dev enp0s3 || true
 
 auto enp0s8
 iface enp0s8 inet static
     address ${address}
     netmask ${netmask}
-${routes}`;
+    gateway ${gateway}
+    dns-nameservers ${gateway} 8.8.8.8 1.1.1.1
+    post-up ip route del default dev enp0s3 || true
+    post-up ip route del default via 10.0.2.2 dev enp0s3 || true
+    post-up ip route replace default via ${gateway} dev enp0s8 || true
+    post-up /bin/sh -c 'printf "nameserver ${gateway}\\nnameserver 8.8.8.8\\nnameserver 1.1.1.1\\n" > /etc/resolv.conf'
+`;
 }
 
 function isDebianHost(host: NetworkPlanHost): boolean {
@@ -227,17 +193,13 @@ export function patchLiveDebianConfigs(
     const vmName = host.id;
     const cfg = getVagrantSshConfig(generatedLabDir, vmName);
 
-    const interfacesContent = generateInterfacesFile(host, plan);
+    const gateway = findGatewayForHost(host);
+    const interfacesContent = generateInterfacesFile(host);
     const interfacesPath = path.join(outputDir, `${vmName}.interfaces`);
 
     fs.writeFileSync(interfacesPath, interfacesContent, "utf-8");
 
-    run(
-      scpCommand,
-      scpArgs(cfg, interfacesPath, "/tmp/interfaces"),
-      generatedLabDir,
-      `Upload /etc/network/interfaces ${vmName}`
-    );
+    run(scpCommand, scpArgs(cfg, interfacesPath, "/tmp/interfaces"), generatedLabDir, `Upload /etc/network/interfaces ${vmName}`);
 
     run(
       sshCommand,
@@ -246,18 +208,33 @@ export function patchLiveDebianConfigs(
         "sudo cp /etc/network/interfaces /etc/network/interfaces.bak.$(date +%Y%m%d%H%M%S) && sudo cp /tmp/interfaces /etc/network/interfaces && sudo chmod 644 /etc/network/interfaces"
       ),
       generatedLabDir,
-      `Application /etc/network/interfaces ${vmName}`,
-      false
+      `Application /etc/network/interfaces ${vmName}`
     );
 
     run(
       sshCommand,
       sshArgs(
         cfg,
-        "sudo ifdown enp0s8 || true; sudo ifup enp0s8 || true; ip addr show enp0s8; ip route"
+        [
+          "sudo ip link set enp0s8 up || true",
+          "sleep 2",
+          "sudo ifdown enp0s8 >/dev/null 2>&1 || true",
+          "sudo ifup enp0s8 >/dev/null 2>&1 || true",
+          "sudo ip route del default via 10.0.2.2 dev enp0s3 >/dev/null 2>&1 || true",
+          "sudo ip route del default dev enp0s3 >/dev/null 2>&1 || true",
+          `sudo ip route replace default via ${gateway} dev enp0s8 || true`,
+          "sudo rm -f /etc/resolv.conf",
+          `sudo /bin/sh -c 'printf "nameserver ${gateway}\\nnameserver 8.8.8.8\\nnameserver 1.1.1.1\\n" > /etc/resolv.conf'`,
+          "ip addr show enp0s8",
+          "ip route",
+          "ip route get 8.8.8.8 || true",
+          "cat /etc/resolv.conf",
+          "ping -c 2 8.8.8.8 || true",
+          "ping -c 2 deb.debian.org || true"
+        ].join("; ")
       ),
       generatedLabDir,
-      `Activation interface interne ${vmName}`,
+      `Activation gateway + DNS ${vmName}`,
       true
     );
   }

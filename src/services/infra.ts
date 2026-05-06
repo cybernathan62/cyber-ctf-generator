@@ -5,6 +5,9 @@ import { LabGeneratorService } from "./labGenerator.js";
 import { generateNetworkPlanFromDefinition } from "./generateNetworkPlan.js";
 import { patchLivePfSenseConfigs } from "./pfsenseLiveConfigPatcher.js";
 import { patchLiveDebianConfigs } from "./debianLiveConfigPatcher.js";
+import { patchLiveWazuhConfigs } from "./wazuhLiveConfigPatcher.js";
+import { patchLiveWazuhAgents } from "./wazuhAgentLivePatcher.js";
+import { validateLabWithPolicies } from "./policyEngine.js";
 import {
   LabDefinition,
   RequestedRole,
@@ -214,7 +217,10 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
     ]);
 
     const nodeCount = wantsDbCluster
-      ? Math.max(2, parseCount(text, "db", "database", "noeud", "nœud", "node", "nodes"))
+      ? Math.max(
+          2,
+          parseCount(text, "db", "database", "noeud", "nœud", "node", "nodes")
+        )
       : 1;
 
     pushRole(
@@ -234,7 +240,10 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
       text.includes("cluster de wazuh");
 
     const nodeCount = wantsWazuhCluster
-      ? Math.max(3, parseCount(text, "wazuh", "noeud", "nœud", "node", "nodes"))
+      ? Math.max(
+          3,
+          parseCount(text, "wazuh", "noeud", "nœud", "node", "nodes")
+        )
       : 1;
 
     pushRole(
@@ -269,9 +278,10 @@ function waitSeconds(seconds: number): void {
   console.log(`\nAttente ${seconds}s...\n`);
 
   const command = process.platform === "win32" ? "timeout.exe" : "sleep";
-  const args = process.platform === "win32"
-    ? ["/T", String(seconds), "/NOBREAK"]
-    : [String(seconds)];
+  const args =
+    process.platform === "win32"
+      ? ["/T", String(seconds), "/NOBREAK"]
+      : [String(seconds)];
 
   const result = spawnSync(command, args, {
     stdio: "inherit",
@@ -300,10 +310,15 @@ function main() {
 
   const outputRoot = path.join(process.cwd(), "outputs");
   const definitionFile = path.join(outputRoot, "lab-definition.json");
+  const policyValidationFile = path.join(outputRoot, "policy-validation.json");
   const networkPlanFile = path.join(outputRoot, "network-plan.json");
   const generatedLabDir = path.join(outputRoot, "generated-lab");
+
   const patchedPfSenseDir = path.join(outputRoot, "pfsense-live-patched");
   const patchedDebianDir = path.join(outputRoot, "debian-live-patched");
+  const patchedWazuhDir = path.join(outputRoot, "wazuh-live-patched");
+  const patchedWazuhAgentDir = path.join(outputRoot, "wazuh-agent-live-patched");
+  const sshAccessFile = path.join(outputRoot, "ssh-access.local.json");
 
   fs.mkdirSync(outputRoot, { recursive: true });
 
@@ -319,10 +334,6 @@ function main() {
   console.log("Lab definition généré :", definitionFile);
   console.log(JSON.stringify(definition, null, 2));
 
-  generateNetworkPlanFromDefinition(definition, outputRoot);
-
-  console.log("Network plan généré :", networkPlanFile);
-
   const generator = new LabGeneratorService();
 
   const result = generator.generateLab({
@@ -330,6 +341,58 @@ function main() {
     outputDir: generatedLabDir
   });
 
+  const generatedDefinitionPath = path.join(
+    generatedLabDir,
+    "lab-definition.json"
+  );
+
+  let generatedDefinition: LabDefinition = definition;
+
+  if (fs.existsSync(generatedDefinitionPath)) {
+    const generatedFromFile = JSON.parse(
+      fs.readFileSync(generatedDefinitionPath, "utf-8")
+    ) as Partial<LabDefinition>;
+
+    generatedDefinition = {
+      ...definition,
+      ...generatedFromFile,
+      required_roles: generatedFromFile.required_roles ?? definition.required_roles,
+      instances: generatedFromFile.instances ?? definition.instances ?? []
+    };
+  }
+
+  fs.writeFileSync(
+    definitionFile,
+    JSON.stringify(generatedDefinition, null, 2),
+    "utf-8"
+  );
+
+  const policyResult = validateLabWithPolicies(generatedDefinition, {
+    projectRoot: process.cwd()
+  });
+
+  fs.writeFileSync(
+    policyValidationFile,
+    JSON.stringify(policyResult, null, 2),
+    "utf-8"
+  );
+
+  if (!policyResult.allowed) {
+    console.error("\n[Policy Engine] Lab refusé :");
+    console.error(JSON.stringify(policyResult.violations, null, 2));
+    throw new Error("Lab refusé par le Policy Engine.");
+  }
+
+  if (policyResult.warnings.length > 0) {
+    console.warn("\n[Policy Engine] Warnings :");
+    console.warn(JSON.stringify(policyResult.warnings, null, 2));
+  }
+
+  console.log("Validation policies générée :", policyValidationFile);
+
+  generateNetworkPlanFromDefinition(generatedDefinition, outputRoot);
+
+  console.log("Network plan généré :", networkPlanFile);
   console.log("Résultat génération :", result);
   console.log("Vagrantfile généré dans :", generatedLabDir);
 
@@ -365,7 +428,24 @@ function main() {
     patchedDebianDir
   );
 
-  console.log("\nInfra démarrée + configs pfSense/Debian live patchées avec succès.");
+  waitSeconds(20);
+
+  patchLiveWazuhConfigs(
+    generatedLabDir,
+    networkPlanFile,
+    patchedWazuhDir
+  );
+
+  waitSeconds(10);
+
+  patchLiveWazuhAgents(
+    generatedLabDir,
+    networkPlanFile,
+    patchedWazuhAgentDir,
+    sshAccessFile
+  );
+
+  console.log("\nInfra complète déployée : pfSense + Debian + Wazuh + agents Wazuh.");
 }
 
 main();
