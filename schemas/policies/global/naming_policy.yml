@@ -1,23 +1,14 @@
 version: 1
 
 naming_policy:
-
-  # =========================
-  # GENERAL RULES
-  # =========================
-
   lowercase_required: true
   hyphen_separator: true
   no_spaces_allowed: true
 
   description: "Tous les noms doivent être en minuscules, sans espaces, avec des tirets."
 
-  # =========================
-  # HOST NAMING
-  # =========================
-
   host_naming_format: "<role>-<index>"
-  examples:
+  host_examples:
     - bastion-1
     - app-1
     - db-1
@@ -26,21 +17,13 @@ naming_policy:
 
   description_hosts: "Les hôtes doivent être nommés par rôle suivi d’un index."
 
-  # =========================
-  # FIREWALL NAMING
-  # =========================
-
   firewall_naming_format: "<role>-<index>"
-  examples:
+  firewall_examples:
     - pfsense-edge-1
     - pfsense-edge-2
     - pfsense-internal-1
 
   description_firewall: "Les firewalls doivent être identifiables par rôle et position."
-
-  # =========================
-  # ZONE NAMING
-  # =========================
 
   allowed_zones:
     - wan
@@ -56,21 +39,13 @@ naming_policy:
 
   description_zones: "Les noms de zones doivent respecter le catalogue défini."
 
-  # =========================
-  # NETWORK NAMING
-  # =========================
-
   network_naming_format: "<zone>-net"
-  examples:
+  network_examples:
     - mgmt-net
     - dmz-net
     - db-net
 
   description_networks: "Les réseaux doivent être nommés par zone."
-
-  # =========================
-  # ROLE NAMING
-  # =========================
 
   allowed_roles:
     - bastion
@@ -90,19 +65,11 @@ naming_policy:
 
   description_roles: "Les rôles doivent correspondre aux rôles définis dans le catalogue."
 
-  # =========================
-  # CONSISTENCY
-  # =========================
-
   naming_must_be_unique: true
   naming_must_be_predictable: true
   naming_must_match_roles: true
 
   description_consistency: "Les noms doivent être cohérents et refléter le rôle réel."
-
-  # =========================
-  # VALIDATION
-  # =========================
 
   invalid_names_must_be_rejected: true
   unknown_roles_forbidden: true

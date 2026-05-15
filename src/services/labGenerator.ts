@@ -31,6 +31,11 @@ type NetworkPlan = {
   hosts: NetworkPlanHost[];
 };
 
+type PortAllocation = {
+  ssh?: number;
+  gui?: number;
+};
+
 export class LabGeneratorService {
   public generateLab(input: GenerateLabInput) {
     const { outputDir, ...model } = input;
@@ -55,13 +60,16 @@ export class LabGeneratorService {
 
     instances = this.attachNetworksFromPlan(instances, networkPlan);
 
-    const vagrantfile = this.generateVagrantfile(instances);
+    const portAllocations = this.allocatePorts(instances);
+    const vagrantfile = this.generateVagrantfile(instances, portAllocations);
 
     fs.writeFileSync(path.join(outputDir, "Vagrantfile"), vagrantfile, "utf-8");
 
+    this.generateSshAccessLocalFile(outputDir, instances, portAllocations);
+
     return {
       success: true,
-      message: "Vagrantfile généré",
+      message: "Vagrantfile + ssh-access.local.json générés",
       outputDir
     };
   }
@@ -128,12 +136,15 @@ export class LabGeneratorService {
         if (zone === "soc") {
           return totalNodes > 1 ? `pfsense-soc-${nodeIndex}` : "pfsense-soc-1";
         }
+
         if (zone === "data") {
           return totalNodes > 1 ? `pfsense-data-${nodeIndex}` : "pfsense-data-1";
         }
+
         if (zone === "ad") {
           return totalNodes > 1 ? `pfsense-ad-${nodeIndex}` : "pfsense-ad-1";
         }
+
         return totalNodes > 1
           ? `pfsense-internal-${nodeIndex}`
           : "pfsense-internal-1";
@@ -185,6 +196,14 @@ export class LabGeneratorService {
     return vm.profile === "pfsense";
   }
 
+  private isEdgePfSense(vm: GeneratedInstance): boolean {
+    return this.isPfSense(vm) && vm.role === "edge_firewall";
+  }
+
+  private isInternalPfSense(vm: GeneratedInstance): boolean {
+    return this.isPfSense(vm) && vm.role === "internal_firewall";
+  }
+
   private resolveBox(vm: GeneratedInstance): string {
     if (this.isPfSense(vm)) {
       return "cyberctf/firewall";
@@ -210,7 +229,10 @@ export class LabGeneratorService {
   private buildNetworkBlock(ref: string, vm: GeneratedInstance): string {
     return vm.nics
       .filter((nic) => nic.networkId !== "edge-wan")
-      .filter((nic) => !(vm.id === "pfsense-edge-1" && nic.networkId === "transit-edge-data-net"))
+      .filter(
+        (nic) =>
+          !(vm.id === "pfsense-edge-1" && nic.networkId === "transit-edge-data-net")
+      )
       .map((nic) => {
         return `    ${ref}.vm.network "private_network", virtualbox__intnet: "${nic.networkId}", auto_config: false`;
       })
@@ -267,7 +289,120 @@ export class LabGeneratorService {
     return `    ${ref}.vm.hostname = "${vm.hostname ?? vm.id}"`;
   }
 
-  private generateVagrantfile(instances: GeneratedInstance[]): string {
+  private buildForwardedPortsBlock(
+    ref: string,
+    vm: GeneratedInstance,
+    ports: PortAllocation
+  ): string {
+    const lines: string[] = [];
+
+    if (ports.ssh) {
+      lines.push(
+        `    ${ref}.vm.network "forwarded_port", guest: 22, host: ${ports.ssh}, host_ip: "127.0.0.1", auto_correct: true, id: "ssh"`
+      );
+    }
+
+    if (this.isPfSense(vm) && ports.gui) {
+      lines.push(
+        `    ${ref}.vm.network "forwarded_port", guest: 443, host: ${ports.gui}, host_ip: "127.0.0.1", auto_correct: true, id: "${vm.id}_gui"`
+      );
+    }
+
+    if (vm.role === "wazuh_server" && ports.gui) {
+      lines.push(
+        `    ${ref}.vm.network "forwarded_port", guest: 443, host: ${ports.gui}, host_ip: "127.0.0.1", auto_correct: true, id: "${vm.id}_dashboard"`
+      );
+    }
+
+    return lines.join("\n");
+  }
+
+  private allocatePorts(instances: GeneratedInstance[]): Map<string, PortAllocation> {
+    const allocations = new Map<string, PortAllocation>();
+
+    let edgePfSenseIndex = 0;
+    let internalPfSenseIndex = 0;
+    let debianIndex = 0;
+    let wazuhDashboardIndex = 0;
+
+    for (const vm of instances) {
+      if (this.isEdgePfSense(vm)) {
+        allocations.set(vm.id, {
+          ssh: 2301 + edgePfSenseIndex,
+          gui: 8443 + edgePfSenseIndex
+        });
+        edgePfSenseIndex += 1;
+        continue;
+      }
+
+      if (this.isInternalPfSense(vm)) {
+        allocations.set(vm.id, {
+          ssh: 2311 + internalPfSenseIndex,
+          gui: 8543 + internalPfSenseIndex
+        });
+        internalPfSenseIndex += 1;
+        continue;
+      }
+
+      if (!this.isPfSense(vm)) {
+        allocations.set(vm.id, {
+          ssh: 2401 + debianIndex,
+          gui: vm.role === "wazuh_server" ? 9443 + wazuhDashboardIndex : undefined
+        });
+
+        if (vm.role === "wazuh_server") {
+          wazuhDashboardIndex += 1;
+        }
+
+        debianIndex += 1;
+      }
+    }
+
+    return allocations;
+  }
+
+  private generateSshAccessLocalFile(
+    outputDir: string,
+    instances: GeneratedInstance[],
+    portAllocations: Map<string, PortAllocation>
+  ): void {
+    const sshAccess: Record<string, unknown> = {};
+
+    for (const vm of instances) {
+      if (this.isPfSense(vm)) continue;
+      if (vm.profile === "windows-server") continue;
+
+      const ports = portAllocations.get(vm.id);
+
+      if (!ports?.ssh) {
+        console.warn(`[ssh-access] Pas de port SSH pour ${vm.id}, ignoré.`);
+        continue;
+      }
+
+      sshAccess[vm.id] = {
+        ssh_host: "127.0.0.1",
+        ssh_port: ports.ssh,
+        ssh_user: "vagrant",
+        identity_file: "~/.vagrant.d/insecure_private_key",
+        access_method: "edge_port_forward"
+      };
+    }
+
+    const sshAccessPath = path.join(outputDir, "..", "ssh-access.local.json");
+
+    fs.writeFileSync(
+      sshAccessPath,
+      JSON.stringify(sshAccess, null, 2),
+      "utf-8"
+    );
+
+    console.log(`[ssh-access] Fichier généré : ${sshAccessPath}`);
+  }
+
+  private generateVagrantfile(
+    instances: GeneratedInstance[],
+    portAllocations: Map<string, PortAllocation>
+  ): string {
     const vmBlocks = instances
       .map((vm) => {
         const ref = vm.id.replace(/-/g, "_");
@@ -278,12 +413,19 @@ export class LabGeneratorService {
         const memory = this.resolveMemory(vm);
         const providerExtra = this.buildProviderExtra(vm);
         const hostnameLine = this.buildHostnameLine(ref, vm);
+        const forwardedPorts = this.buildForwardedPortsBlock(
+          ref,
+          vm,
+          portAllocations.get(vm.id) ?? {}
+        );
 
         return `
   config.vm.define "${vm.id}" do |${ref}|
     ${ref}.vm.box = "${box}"
 ${hostnameLine}
 ${ssh}
+
+${forwardedPorts}
 
 ${networks}
 

@@ -3,15 +3,21 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { NetworkPlan, NetworkPlanHost } from "./type.js";
 
-type SshAccessEntry = {
-  ssh_host: string;
-  ssh_port: number;
-  ssh_user: string;
-  identity_file: string;
-  access_method?: string;
+type SshConfig = {
+  hostName: string;
+  port: string;
+  user: string;
+  identityFile: string;
 };
 
-type SshAccessMap = Record<string, SshAccessEntry>;
+type SshAccessMap = Record<string, SshConfig>;
+
+type AgentTarget = {
+  vmName: string;
+  host: NetworkPlanHost;
+  ssh: SshConfig;
+  managerIp: string;
+};
 
 function run(command: string, args: string[], cwd: string, label: string, allowFailure = false): string {
   console.log(`\n[Wazuh agent] ${label}`);
@@ -39,6 +45,10 @@ function run(command: string, args: string[], cwd: string, label: string, allowF
     throw new Error(`[Wazuh agent] Échec ${label} avec code ${result.status}`);
   }
 
+  if (allowFailure && result.status !== 0) {
+    console.warn(`[Wazuh agent] Warning ${label}: code ${result.status}`);
+  }
+
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
 }
 
@@ -46,167 +56,294 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
-function sshArgs(access: SshAccessEntry, remoteCommand: string): string[] {
-  return [
-    "-i", access.identity_file,
-    "-p", String(access.ssh_port),
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=/dev/null",
-    "-o", "LogLevel=ERROR",
-    `${access.ssh_user}@${access.ssh_host}`,
-    remoteCommand
-  ];
+function ensureDir(dir: string): void {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-function scpArgs(access: SshAccessEntry, localPath: string, remotePath: string): string[] {
-  return [
-    "-i", access.identity_file,
-    "-P", String(access.ssh_port),
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=/dev/null",
-    "-o", "LogLevel=ERROR",
-    localPath,
-    `${access.ssh_user}@${access.ssh_host}:${remotePath}`
-  ];
+function readJsonFile<T>(filePath: string): T {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`[Wazuh agent] Fichier introuvable: ${filePath}`);
+  }
+
+  return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
 }
 
-function getPrimaryIp(host: NetworkPlanHost): string {
+function cleanIp(value: unknown): string {
+  return String(value).split("/")[0].trim();
+}
+
+function getValueIp(value: unknown): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  return cleanIp(value);
+}
+
+function findHostIp(host: NetworkPlanHost): string {
   const h = host as any;
 
-  if (h.ip) return String(h.ip).split("/")[0];
+  const directIp =
+    getValueIp(h.ip) ??
+    getValueIp(h.ip_address) ??
+    getValueIp(h.address) ??
+    getValueIp(h.ipv4) ??
+    getValueIp(h.private_ip);
 
-  const iface = h.interfaces?.find((i: any) => i.name !== "wan" && i.ip);
-  if (!iface?.ip) throw new Error(`IP interne manquante pour ${h.id ?? h.name}`);
+  if (directIp) return directIp;
 
-  return String(iface.ip).split("/")[0];
+  if (Array.isArray(h.interfaces)) {
+    const getIfaceIp = (i: any): string | null => {
+      return (
+        getValueIp(i.ip) ??
+        getValueIp(i.ip_address) ??
+        getValueIp(i.address) ??
+        getValueIp(i.ipv4) ??
+        getValueIp(i.private_ip)
+      );
+    };
+
+    const preferredIface = h.interfaces.find((i: any) => {
+      const marker = String(
+        i.name ??
+          i.network_id ??
+          i.network ??
+          i.zone ??
+          i.zone_id ??
+          i.label ??
+          ""
+      ).toLowerCase();
+
+      return marker.includes("soc") || marker.includes("wazuh") || marker.includes("management");
+    });
+
+    const preferredIp = preferredIface ? getIfaceIp(preferredIface) : null;
+    if (preferredIp) return preferredIp;
+
+    const firstWithIp = h.interfaces.find((i: any) => getIfaceIp(i));
+    const firstIp = firstWithIp ? getIfaceIp(firstWithIp) : null;
+    if (firstIp) return firstIp;
+  }
+
+  throw new Error(`[Wazuh agent] IP introuvable ou ambiguë pour host: ${JSON.stringify(host, null, 2)}`);
 }
 
-function isWazuhServer(host: NetworkPlanHost): boolean {
+function getHostName(host: NetworkPlanHost): string {
   const h = host as any;
-  return String(h.role ?? "").toLowerCase() === "wazuh_server";
+  return String(h.name ?? h.hostname ?? h.vmName ?? h.vm_name ?? h.id ?? "");
 }
 
-function isPfSenseHost(host: NetworkPlanHost): boolean {
+function getHostRole(host: NetworkPlanHost): string {
   const h = host as any;
-  const role = String(h.role ?? "").toLowerCase();
-  const id = String(h.id ?? h.name ?? "").toLowerCase();
-  const profile = String(h.profile ?? h.vm_profile ?? "").toLowerCase();
-
-  return role.includes("firewall") || role.includes("pfsense") || id.includes("pfsense") || profile.includes("pfsense");
+  return String(h.role ?? h.service ?? h.profile ?? h.vm_profile ?? h.type ?? "").toLowerCase();
 }
 
-function isDebianLike(host: NetworkPlanHost): boolean {
-  const h = host as any;
-  const profile = String(h.profile ?? h.vm_profile ?? "").toLowerCase();
-  return profile.includes("debian") || profile.includes("wazuh");
+function isWazuhHost(host: NetworkPlanHost): boolean {
+  const name = getHostName(host).toLowerCase();
+  const role = getHostRole(host);
+
+  return (
+    name === "wazuh-1" ||
+    name.startsWith("wazuh") ||
+    role === "wazuh" ||
+    role === "wazuh_server" ||
+    role === "wazuh-server"
+  );
 }
 
-function isAgentTarget(host: NetworkPlanHost): boolean {
-  if (isWazuhServer(host)) return false;
-  if (isPfSenseHost(host)) return false;
+function isFirewallHost(host: NetworkPlanHost): boolean {
+  const name = getHostName(host).toLowerCase();
+  const role = getHostRole(host);
 
-  const h = host as any;
-  const role = String(h.role ?? "").toLowerCase();
-
-  const allowedRoles = [
-    "bastion",
-    "reverse_proxy",
-    "dmz",
-    "zabbix_server",
-    "db_server",
-    "ad_server",
-    "file_server",
-    "backup_server",
-    "web_server",
-    "linux_server"
-  ];
-
-  return allowedRoles.includes(role) || isDebianLike(host);
+  return (
+    name.includes("pfsense") ||
+    name.includes("firewall") ||
+    role.includes("firewall") ||
+    role.includes("pfsense") ||
+    role === "edge_firewall" ||
+    role === "internal_firewall"
+  );
 }
 
-function normalizeIdentityFile(value: string): string {
-  const cleaned = value.replace(/^"|"$/g, "");
+function isAgentEligibleHost(host: NetworkPlanHost): boolean {
+  const name = getHostName(host).toLowerCase();
+  const role = getHostRole(host);
+
+  if (!name) return false;
+  if (isWazuhHost(host)) return false;
+  if (isFirewallHost(host)) return false;
+
+  const excludedRoles = new Set([
+    "switch",
+    "router",
+    "network_device",
+    "unknown"
+  ]);
+
+  if (excludedRoles.has(role)) return false;
+
+  return true;
+}
+
+function expandIdentityFile(identityFile: string): string {
+  const cleaned = identityFile.replace(/^"|"$/g, "");
 
   if (cleaned.startsWith("~/") || cleaned.startsWith("~\\")) {
-    const home = process.env.USERPROFILE || process.env.HOME;
-    if (!home) throw new Error("Impossible de résoudre ~ dans identity_file");
+    const home = process.env.USERPROFILE ?? process.env.HOME;
+    if (!home) return cleaned;
     return path.join(home, cleaned.slice(2));
   }
 
   return cleaned;
 }
 
-function loadSshAccess(sshAccessPath: string): SshAccessMap {
-  if (!sshAccessPath.endsWith(".local.json")) {
-    throw new Error(`Refus sécurité: le fichier SSH doit être un .local.json non versionné: ${sshAccessPath}`);
+function normalizeSshConfig(raw: any): SshConfig {
+  const hostName = String(
+    raw.HostName ??
+      raw.hostname ??
+      raw.hostName ??
+      raw.host ??
+      raw.ssh_host ??
+      "127.0.0.1"
+  );
+
+  const port = String(raw.Port ?? raw.port ?? raw.ssh_port ?? "22");
+  const user = String(raw.User ?? raw.user ?? raw.ssh_user ?? "vagrant");
+
+  const identityFile = expandIdentityFile(
+    String(raw.IdentityFile ?? raw.identityFile ?? raw.identity_file ?? raw.key ?? "")
+  );
+
+  if (!identityFile) {
+    throw new Error("[Wazuh agent] IdentityFile SSH manquant dans ssh-access.local.json");
   }
 
-  if (!fs.existsSync(sshAccessPath)) {
-    throw new Error(`Fichier SSH introuvable: ${sshAccessPath}`);
-  }
-
-  const raw = JSON.parse(fs.readFileSync(sshAccessPath, "utf-8")) as SshAccessMap;
-
-  for (const entry of Object.values(raw)) {
-    entry.identity_file = normalizeIdentityFile(entry.identity_file);
-  }
-
-  return raw;
+  return { hostName, port, user, identityFile };
 }
 
-function writeAgentInstallScript(outputDir: string, wazuhIp: string): string {
-  const runtimeDir = path.join(outputDir, "wazuh-agent-runtime");
-  fs.mkdirSync(runtimeDir, { recursive: true });
+function loadSshAccess(outputsDir: string): SshAccessMap {
+  const filePath = path.join(outputsDir, "ssh-access.local.json");
+  const raw = readJsonFile<any>(filePath);
+  const result: SshAccessMap = {};
 
-  const scriptPath = path.join(runtimeDir, "install-wazuh-agent.sh");
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const name = String(item.name ?? item.vmName ?? item.vm_name ?? item.host ?? item.hostname ?? "");
+      if (name) result[name] = normalizeSshConfig(item);
+    }
+    return result;
+  }
 
-  const content = `#!/usr/bin/env bash
+  for (const [key, value] of Object.entries(raw)) {
+    result[key] = normalizeSshConfig(value);
+  }
+
+  return result;
+}
+
+function getNetworkHosts(networkPlan: NetworkPlan): NetworkPlanHost[] {
+  const n = networkPlan as any;
+
+  if (Array.isArray(n.hosts)) return n.hosts as NetworkPlanHost[];
+  if (Array.isArray(n.instances)) return n.instances as NetworkPlanHost[];
+  if (Array.isArray(n.vms)) return n.vms as NetworkPlanHost[];
+
+  if (Array.isArray(n.zone_definitions)) {
+    const hosts: NetworkPlanHost[] = [];
+
+    for (const zone of n.zone_definitions) {
+      if (Array.isArray(zone.hosts)) hosts.push(...zone.hosts);
+      if (Array.isArray(zone.instances)) hosts.push(...zone.instances);
+    }
+
+    if (hosts.length > 0) return hosts;
+  }
+
+  throw new Error("[Wazuh agent] Aucun host trouvé dans network-plan.json");
+}
+
+function resolveOutputsDir(outputsDir: string): string {
+  return fs.existsSync(path.join(outputsDir, "network-plan.json"))
+    ? outputsDir
+    : path.dirname(outputsDir);
+}
+
+function sshArgs(ssh: SshConfig, remoteCommand: string): string[] {
+  return [
+    "-i",
+    ssh.identityFile,
+    "-p",
+    ssh.port,
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "LogLevel=ERROR",
+    `${ssh.user}@${ssh.hostName}`,
+    remoteCommand
+  ];
+}
+
+function scpArgs(ssh: SshConfig, localPath: string, remotePath: string): string[] {
+  return [
+    "-i",
+    ssh.identityFile,
+    "-P",
+    ssh.port,
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "LogLevel=ERROR",
+    localPath,
+    `${ssh.user}@${ssh.hostName}:${remotePath}`
+  ];
+}
+
+function buildAgentInstallScript(target: AgentTarget): string {
+  const agentName = target.vmName;
+
+  const script = `#!/usr/bin/env bash
 set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-WAZUH_MANAGER="${wazuhIp}"
-AGENT_NAME="$1"
+WAZUH_MANAGER="__WAZUH_MANAGER__"
+WAZUH_AGENT_NAME="__WAZUH_AGENT_NAME__"
 
 log() {
   echo
   echo "--- $* ---"
 }
 
-wait_port() {
-  local host="$1"
-  local port="$2"
-  local timeout="180"
-  local elapsed="0"
+wait_manager_ports() {
+  local timeout=180
+  local elapsed=0
 
-  until nc -z -w 3 "$host" "$port" >/dev/null 2>&1; do
-    echo "Waiting for Wazuh manager $host:$port..."
+  while [ "$elapsed" -lt "$timeout" ]; do
+    if nc -z "$WAZUH_MANAGER" 1514 >/dev/null 2>&1 && nc -z "$WAZUH_MANAGER" 1515 >/dev/null 2>&1; then
+      echo "[OK] Manager reachable on $WAZUH_MANAGER:1514/1515"
+      return 0
+    fi
+
+    echo "waiting Wazuh manager $WAZUH_MANAGER:1514/1515..."
     sleep 5
     elapsed=$((elapsed + 5))
-
-    if [ "$elapsed" -ge "$timeout" ]; then
-      echo "[ERROR] Wazuh manager port $port unreachable after timeout"
-      ip route || true
-      cat /etc/resolv.conf || true
-      nc -vz "$host" "$port" || true
-      exit 1
-    fi
   done
+
+  echo "[ERROR] Wazuh manager unreachable from agent"
+  ip -br a || true
+  ip route || true
+  nc -vz "$WAZUH_MANAGER" 1514 || true
+  nc -vz "$WAZUH_MANAGER" 1515 || true
+  exit 1
 }
 
-log "WAZUH AGENT INSTALL: $AGENT_NAME -> $WAZUH_MANAGER"
-
-log "NETWORK CHECK"
-ip route || true
-cat /etc/resolv.conf || true
-ping -c 2 "$WAZUH_MANAGER" || true
+log "APT REPAIR"
+apt-get clean || true
+apt-get update -y
+apt-get install -f -y || true
 
 log "INSTALL PREREQUISITES"
-apt-get update -y || true
-apt-get install -y curl ca-certificates gnupg apt-transport-https netcat-openbsd
-
-log "WAIT MANAGER PORTS"
-wait_port "$WAZUH_MANAGER" 1515
-wait_port "$WAZUH_MANAGER" 1514
+apt-get install -y curl gnupg ca-certificates apt-transport-https procps netcat-openbsd
 
 log "CONFIGURE WAZUH REPOSITORY"
 install -d -m 0755 /usr/share/keyrings
@@ -220,142 +357,138 @@ EOF
 
 apt-get update -y
 
-log "INSTALL OR RECONFIGURE WAZUH AGENT"
-if dpkg -s wazuh-agent >/dev/null 2>&1; then
-  echo "wazuh-agent already installed, reconfiguring."
-else
-  WAZUH_MANAGER="$WAZUH_MANAGER" WAZUH_AGENT_NAME="$AGENT_NAME" apt-get install -y wazuh-agent
-fi
+log "WAIT MANAGER BEFORE INSTALL"
+wait_manager_ports
 
-log "FORCE MANAGER CONFIG"
-if [ -f /var/ossec/etc/ossec.conf ]; then
-  sed -i "s|<address>.*</address>|<address>$WAZUH_MANAGER</address>|g" /var/ossec/etc/ossec.conf || true
-fi
+log "INSTALL WAZUH AGENT ONLY"
+WAZUH_MANAGER="$WAZUH_MANAGER" WAZUH_AGENT_NAME="$WAZUH_AGENT_NAME" apt-get install -y wazuh-agent
 
-log "FIX AGENT PERMISSIONS"
-chown -R root:wazuh /var/ossec 2>/dev/null || true
-chmod 750 /var/ossec 2>/dev/null || true
+log "CONFIGURE AGENT MANAGER"
+python3 - <<PY
+from pathlib import Path
+import re
 
-log "ENABLE + START AGENT"
+p = Path("/var/ossec/etc/ossec.conf")
+s = p.read_text()
+
+if "<client>" not in s:
+    raise SystemExit("[ERROR] /var/ossec/etc/ossec.conf does not contain <client>")
+
+s = re.sub(r"<address>[^<]+</address>", "<address>$WAZUH_MANAGER</address>", s, count=1)
+p.write_text(s)
+PY
+
+log "ENABLE AND START AGENT"
 systemctl daemon-reload
 systemctl enable wazuh-agent
 systemctl restart wazuh-agent
+sleep 5
 
-sleep 8
-
-log "AGENT STATUS"
-systemctl is-active wazuh-agent
+log "VALIDATE AGENT"
 systemctl status wazuh-agent --no-pager -l || true
+/var/ossec/bin/wazuh-control status || true
 
-log "AGENT LOG TAIL"
-tail -n 100 /var/ossec/logs/ossec.log || true
+echo "--- AGENT CONFIG ---"
+grep -nA8 -B2 "<client>" /var/ossec/etc/ossec.conf || true
 
-log "DONE AGENT"
+echo "--- AGENT LOGS ---"
+grep -iE "connected|manager|error|failed|denied|invalid|auth|enroll" /var/ossec/logs/ossec.log | tail -n 120 || true
+
+log "DONE WAZUH AGENT INSTALL"
+exit 0
 `;
 
-  fs.writeFileSync(scriptPath, content, { encoding: "utf-8", mode: 0o700 });
+  return script
+    .replaceAll("__WAZUH_MANAGER__", target.managerIp)
+    .replaceAll("__WAZUH_AGENT_NAME__", agentName);
+}
+
+function createRuntimeFiles(generatedLabDir: string, target: AgentTarget, script: string): string {
+  const runtimeDir = path.join(generatedLabDir, "wazuh-agent-live-patcher-runtime");
+  ensureDir(runtimeDir);
+
+  const scriptPath = path.join(runtimeDir, `${target.vmName}-install-wazuh-agent.sh`);
+  fs.writeFileSync(scriptPath, script, "utf-8");
+
   return scriptPath;
 }
 
-export function patchLiveWazuhAgents(
-  generatedLabDir: string,
-  networkPlanPath: string,
-  outputDir: string,
-  sshAccessPath = path.join(process.cwd(), "outputs", "ssh-access.local.json")
-): void {
-  const plan = JSON.parse(fs.readFileSync(networkPlanPath, "utf-8")) as NetworkPlan;
-  fs.mkdirSync(outputDir, { recursive: true });
+function resolveTargets(outputsDir: string, generatedLabDir: string): AgentTarget[] {
+  const realOutputsDir = resolveOutputsDir(outputsDir);
+  const networkPlanPath = path.join(realOutputsDir, "network-plan.json");
+  const networkPlan = readJsonFile<NetworkPlan>(networkPlanPath);
+  const hosts = getNetworkHosts(networkPlan);
+  const sshAccess = loadSshAccess(realOutputsDir);
 
-  const sshAccess = loadSshAccess(sshAccessPath);
+  const wazuhHost = hosts.find(isWazuhHost);
 
-  const wazuhHost = plan.hosts.find(isWazuhServer);
-  if (!wazuhHost) throw new Error("Aucun host role=wazuh_server trouvé dans network-plan.json");
-
-  const wazuhIp = getPrimaryIp(wazuhHost);
-  const wazuhAccess = sshAccess[(wazuhHost as any).id];
-
-  const targets = plan.hosts.filter(isAgentTarget);
-
-  if (targets.length === 0) {
-    console.log("[Wazuh agent] Aucun agent cible trouvé.");
-    return;
+  if (!wazuhHost) {
+    console.log("[Wazuh agent] Aucun serveur Wazuh trouvé dans network-plan.json, skip agents.");
+    return [];
   }
+
+  const managerIp = findHostIp(wazuhHost);
+  console.log(`[Wazuh agent] Manager Wazuh détecté: ${managerIp}`);
+
+  const agentHosts = hosts.filter(isAgentEligibleHost);
+
+  if (agentHosts.length === 0) {
+    console.log("[Wazuh agent] Aucun host éligible agent trouvé dans network-plan.json, skip.");
+    return [];
+  }
+
+  return agentHosts.map((host) => {
+    const vmName = getHostName(host);
+    const ssh = sshAccess[vmName];
+
+    if (!ssh) {
+      throw new Error(`[Wazuh agent] SSH config introuvable pour ${vmName} dans ssh-access.local.json`);
+    }
+
+    return {
+      vmName,
+      host,
+      ssh,
+      managerIp
+    };
+  });
+}
+
+export function patchLiveWazuhAgents(outputsDir = path.join(process.cwd(), "outputs")): void {
+  const generatedLabDir = resolveOutputsDir(outputsDir);
+  ensureDir(generatedLabDir);
+
+  const targets = resolveTargets(outputsDir, generatedLabDir);
+  if (targets.length === 0) return;
 
   const sshCommand = process.platform === "win32" ? "ssh.exe" : "ssh";
   const scpCommand = process.platform === "win32" ? "scp.exe" : "scp";
 
-  if (wazuhAccess) {
-    run(
-      sshCommand,
-      sshArgs(
-        wazuhAccess,
-        [
-          "echo '--- MANAGER PRECHECK ---'",
-          "sudo /var/ossec/bin/wazuh-control status || true",
-          "sudo ss -lntp | grep -E ':1514|:1515|:55000|:9200' || true",
-          "sudo ss -lntp | grep -q ':1515' || { echo '[ERROR] Manager authd 1515 fermé'; exit 1; }",
-          "sudo ss -lntp | grep -q ':1514' || { echo '[ERROR] Manager remoted 1514 fermé'; exit 1; }"
-        ].join("; ")
-      ),
-      generatedLabDir,
-      `Pré-check manager ${String((wazuhHost as any).id)}`
-    );
-  }
+  for (const target of targets) {
+    const script = buildAgentInstallScript(target);
+    const localScriptPath = createRuntimeFiles(generatedLabDir, target, script);
+    const remoteScriptPath = `/tmp/${target.vmName}-install-wazuh-agent.sh`;
 
-  const scriptPath = writeAgentInstallScript(outputDir, wazuhIp);
-
-  console.log(`\n===== WAZUH AGENTS DEPLOYMENT =====`);
-  console.log(`[Wazuh agent] Manager: ${(wazuhHost as any).id} ${wazuhIp}`);
-  console.log(`[Wazuh agent] Targets: ${targets.map((h: any) => h.id).join(", ")}`);
-
-  for (const host of targets as any[]) {
-    const access = sshAccess[host.id];
-
-    if (!access) {
-      throw new Error(`Aucun accès SSH local trouvé pour ${host.id} dans ${sshAccessPath}`);
-    }
-
-    console.log(`\n===== INSTALL AGENT ${host.id} =====`);
+    console.log(`\n[Wazuh agent] Cible agent: ${target.vmName}`);
+    console.log(`[Wazuh agent] Manager: ${target.managerIp}`);
 
     run(
       scpCommand,
-      scpArgs(access, scriptPath, "/tmp/install-wazuh-agent.sh"),
+      scpArgs(target.ssh, localScriptPath, remoteScriptPath),
       generatedLabDir,
-      `Upload script agent ${host.id}`
+      `Upload script agent ${target.vmName}`
     );
 
     run(
       sshCommand,
       sshArgs(
-        access,
-        `sudo chmod 700 /tmp/install-wazuh-agent.sh && sudo /tmp/install-wazuh-agent.sh ${shellQuote(host.id)}`
+        target.ssh,
+        `sudo chmod 700 ${shellQuote(remoteScriptPath)} && sudo bash ${shellQuote(remoteScriptPath)}`
       ),
       generatedLabDir,
-      `Installation agent Wazuh ${host.id}`
-    );
-
-    run(
-      sshCommand,
-      sshArgs(
-        access,
-        "sudo systemctl is-active wazuh-agent && sudo tail -n 50 /var/ossec/logs/ossec.log || true"
-      ),
-      generatedLabDir,
-      `Validation locale agent ${host.id}`,
-      true
-    );
-  }
-
-  if (wazuhAccess) {
-    run(
-      sshCommand,
-      sshArgs(
-        wazuhAccess,
-        "sudo /var/ossec/bin/agent_control -l || true"
-      ),
-      generatedLabDir,
-      `Liste agents côté manager ${(wazuhHost as any).id}`,
-      true
+      `Installation agent Wazuh ${target.vmName}`
     );
   }
 }
+
+export default patchLiveWazuhAgents;

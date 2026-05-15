@@ -23,12 +23,12 @@ function run(
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf-8",
-    shell: false
+    shell: false,
+    maxBuffer: 1024 * 1024 * 20
   });
 
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
-
   if (result.error) throw result.error;
 
   if (!allowFailure && result.status !== 0) {
@@ -38,15 +38,14 @@ function run(
   return result.stdout ?? "";
 }
 
+function sleepMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function getVagrantSshConfig(generatedLabDir: string, vmName: string): SshConfig {
   const command = process.platform === "win32" ? "vagrant.exe" : "vagrant";
 
-  const raw = run(
-    command,
-    ["ssh-config", vmName],
-    generatedLabDir,
-    `Lecture ssh-config ${vmName}`
-  );
+  const raw = run(command, ["ssh-config", vmName], generatedLabDir, `Lecture ssh-config ${vmName}`);
 
   const get = (key: string): string => {
     const line = raw
@@ -100,10 +99,6 @@ function scpArgs(cfg: SshConfig, localPath: string, remotePath: string): string[
   ];
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function replaceTag(xml: string, tag: string, replacement: string): string {
   const regex = new RegExp(`<${tag}>[\\s\\S]*?<\\/${tag}>`, "m");
 
@@ -114,24 +109,34 @@ function replaceTag(xml: string, tag: string, replacement: string): string {
   return xml.replace(regex, replacement);
 }
 
-function replaceSystemHostnameAndGateway(xml: string, host: NetworkPlanHost): string {
-  let patched = xml;
+function patchSystemGateway(xml: string, host: NetworkPlanHost): string {
+  const gateway =
+    host.role === "edge_firewall"
+      ? "WAN_DHCP"
+      : host.role === "internal_firewall"
+        ? "GW_EDGE"
+        : "";
 
-  patched = patched.replace(
+  let patched = xml.replace(
     /<hostname>[\s\S]*?<\/hostname>/,
     `<hostname>${host.id}</hostname>`
   );
 
-  if (host.role === "internal_firewall") {
-    if (/<gateway>[\s\S]*?<\/gateway>/.test(patched)) {
-      patched = patched.replace(/<gateway>[\s\S]*?<\/gateway>/, `<gateway>GW_EDGE</gateway>`);
-    } else {
-      patched = patched.replace(
-        /<domain>[\s\S]*?<\/domain>/,
-        (match) => `${match}\n\t\t<gateway>GW_EDGE</gateway>`
-      );
-    }
-  }
+  if (!gateway) return patched;
+
+  patched = patched.replace(/<defaultgw4>[\s\S]*?<\/defaultgw4>/g, "");
+
+  patched = patched.replace(
+    /<\/system>/,
+    `\t\t<defaultgw4>${gateway}</defaultgw4>\n\t</system>`
+  );
+
+  patched = patched.replace(/<gateway>[\s\S]*?<\/gateway>/g, "");
+
+  patched = patched.replace(
+    /<\/system>/,
+    `\t\t<gateway>${gateway}</gateway>\n\t</system>`
+  );
 
   return patched;
 }
@@ -144,6 +149,13 @@ function subnetOnly(ip: string): string {
   const subnet = ip.split("/")[1];
   if (!subnet) throw new Error(`CIDR invalide: ${ip}`);
   return subnet;
+}
+
+function networkFromCidr(ipCidr: string): string {
+  const ip = ipOnly(ipCidr);
+  const cidr = subnetOnly(ipCidr);
+  const [a, b, c] = ip.split(".");
+  return `${a}.${b}.${c}.0/${cidr}`;
 }
 
 function xmlNameByIndex(index: number): string {
@@ -177,24 +189,35 @@ function renderInterface(xmlName: string, em: string, iface: any): string {
 \t\t</${xmlName}>`;
 }
 
+function renderDisabledWanTemp(): string {
+  return `
+\t\t<wan>
+\t\t\t<if>em0</if>
+\t\t\t<descr><![CDATA[WAN_TEMP]]></descr>
+\t\t\t<ipaddr>none</ipaddr>
+\t\t\t<subnet></subnet>
+\t\t</wan>`;
+}
+
 function generateInterfaces(host: NetworkPlanHost): string {
   let body = "";
-
-  const hasWan = host.interfaces.some((i) => i.name === "wan");
+  const hasWan = host.interfaces.some((i: any) => i.name === "wan");
 
   if (hasWan) {
-    host.interfaces.forEach((iface, index) => {
+    host.interfaces.forEach((iface: any, index: number) => {
       const xmlName = index === 0 ? "wan" : xmlNameByIndex(index - 1);
       body += renderInterface(xmlName, `em${index}`, iface);
     });
   } else {
-    body += renderInterface("wan", "em0", {
-      name: "wan_temp",
-      network_id: "edge-wan",
-      mode: "dhcp"
-    });
+    body += host.role === "internal_firewall"
+      ? renderDisabledWanTemp()
+      : renderInterface("wan", "em0", {
+          name: "wan_temp",
+          network_id: "edge-wan",
+          mode: "dhcp"
+        });
 
-    host.interfaces.forEach((iface, index) => {
+    host.interfaces.forEach((iface: any, index: number) => {
       body += renderInterface(xmlNameByIndex(index), `em${index + 1}`, iface);
     });
   }
@@ -209,16 +232,32 @@ function gatewayName(routeName: string): string {
 
 function gatewayInterfaceForEdge(host: NetworkPlanHost, gatewayIp: string): string {
   const gatewayPrefix = gatewayIp.split(".").slice(0, 3).join(".");
+  const nonWanInterfaces = host.interfaces.filter((i: any) => i.name !== "wan");
 
-  const nonWanInterfaces = host.interfaces.filter((i) => i.name !== "wan");
-
-  const index = nonWanInterfaces.findIndex((iface) => {
+  const index = nonWanInterfaces.findIndex((iface: any) => {
     if (!iface.ip) return false;
     return iface.ip.split(".").slice(0, 3).join(".") === gatewayPrefix;
   });
 
   if (index === -1) {
     throw new Error(`Impossible de mapper la gateway ${gatewayIp} sur une interface edge`);
+  }
+
+  return xmlNameByIndex(index);
+}
+
+function gatewayInterfaceForInternal(host: NetworkPlanHost, gatewayIp: string): string {
+  const gatewayPrefix = gatewayIp.split(".").slice(0, 3).join(".");
+
+  const index = host.interfaces.findIndex((iface: any) => {
+    if (!iface.ip) return false;
+    return iface.ip.split(".").slice(0, 3).join(".") === gatewayPrefix;
+  });
+
+  if (index === -1) {
+    throw new Error(
+      `Impossible de mapper la gateway interne ${gatewayIp} sur une interface de ${host.id}`
+    );
   }
 
   return xmlNameByIndex(index);
@@ -235,9 +274,10 @@ function generateGateways(host: NetworkPlanHost): string {
 \t\t\t<name>WAN_DHCP</name>
 \t\t\t<weight>1</weight>
 \t\t\t<ipprotocol>inet</ipprotocol>
+\t\t\t<descr><![CDATA[WAN DHCP Gateway]]></descr>
 \t\t</gateway_item>`;
 
-    host.static_routes?.forEach((route) => {
+    host.static_routes?.forEach((route: any) => {
       const iface = gatewayInterfaceForEdge(host, route.gateway);
 
       body += `
@@ -247,6 +287,7 @@ function generateGateways(host: NetworkPlanHost): string {
 \t\t\t<name>${gatewayName(route.name)}</name>
 \t\t\t<weight>1</weight>
 \t\t\t<ipprotocol>inet</ipprotocol>
+\t\t\t<descr><![CDATA[Gateway ${route.name}]]></descr>
 \t\t</gateway_item>`;
     });
   }
@@ -256,13 +297,16 @@ function generateGateways(host: NetworkPlanHost): string {
       throw new Error(`default_gateway manquant pour ${host.id}`);
     }
 
+    const iface = gatewayInterfaceForInternal(host, host.default_gateway);
+
     body += `
 \t\t<gateway_item>
-\t\t\t<interface>lan</interface>
+\t\t\t<interface>${iface}</interface>
 \t\t\t<gateway>${host.default_gateway}</gateway>
 \t\t\t<name>GW_EDGE</name>
 \t\t\t<weight>1</weight>
 \t\t\t<ipprotocol>inet</ipprotocol>
+\t\t\t<descr><![CDATA[Gateway vers edge via TRANSIT]]></descr>
 \t\t</gateway_item>`;
   }
 
@@ -277,7 +321,7 @@ function generateStaticRoutes(host: NetworkPlanHost): string {
 
   let body = "";
 
-  host.static_routes.forEach((route) => {
+  host.static_routes.forEach((route: any) => {
     body += `
 \t\t<route>
 \t\t\t<network>${route.destination}</network>
@@ -291,15 +335,78 @@ function generateStaticRoutes(host: NetworkPlanHost): string {
 }
 
 function generateNat(host: NetworkPlanHost): string {
+  if (host.role !== "edge_firewall") {
+    return `\t<nat>
+\t\t<outbound>
+\t\t\t<mode>disabled</mode>
+\t\t</outbound>
+\t</nat>`;
+  }
+
+  const directNetworks = host.interfaces
+    .filter((iface: any) => iface.name !== "wan")
+    .filter((iface: any) => iface.ip)
+    .map((iface: any) => ({
+      name: iface.name,
+      network: networkFromCidr(iface.ip)
+    }));
+
+  const routedNetworks =
+    host.static_routes?.map((route: any) => ({
+      name: route.name,
+      network: route.destination
+    })) ?? [];
+
+  const allNatNetworks = [...directNetworks, ...routedNetworks];
+
+  const rules = allNatNetworks
+    .map(
+      (item) => `
+\t\t\t<rule>
+\t\t\t\t<source>
+\t\t\t\t\t<network>${item.network}</network>
+\t\t\t\t</source>
+\t\t\t\t<destination>
+\t\t\t\t\t<any></any>
+\t\t\t\t</destination>
+\t\t\t\t<interface>wan</interface>
+\t\t\t\t<target></target>
+\t\t\t\t<poolopts></poolopts>
+\t\t\t\t<descr><![CDATA[NAT outbound ${item.name} ${item.network} via WAN]]></descr>
+\t\t\t\t<created>
+\t\t\t\t\t<time>${Math.floor(Date.now() / 1000)}</time>
+\t\t\t\t\t<username><![CDATA[automation]]></username>
+\t\t\t\t</created>
+\t\t\t</rule>`
+    )
+    .join("");
+
   return `\t<nat>
 \t\t<outbound>
-\t\t\t<mode>${host.role === "edge_firewall" ? "automatic" : "disabled"}</mode>
+\t\t\t<mode>hybrid</mode>${rules}
 \t\t</outbound>
 \t</nat>`;
 }
 
-function generateFilter(host: NetworkPlanHost): string {
-  const hasWan = host.interfaces.some((i) => i.name === "wan");
+function generateWanGuiRule(): string {
+  return `
+\t\t<rule>
+\t\t\t<type>pass</type>
+\t\t\t<interface>wan</interface>
+\t\t\t<ipprotocol>inet</ipprotocol>
+\t\t\t<protocol>tcp</protocol>
+\t\t\t<statetype><![CDATA[keep state]]></statetype>
+\t\t\t<source><any></any></source>
+\t\t\t<destination>
+\t\t\t\t<any></any>
+\t\t\t\t<port>443</port>
+\t\t\t</destination>
+\t\t\t<descr><![CDATA[TEMP allow pfSense GUI on WAN 443]]></descr>
+\t\t</rule>`;
+}
+
+function generateInternalAllowRules(host: NetworkPlanHost): string {
+  const hasWan = host.interfaces.some((i: any) => i.name === "wan");
   const count = hasWan ? host.interfaces.length - 1 : host.interfaces.length;
 
   let body = "";
@@ -319,6 +426,18 @@ function generateFilter(host: NetworkPlanHost): string {
 \t\t</rule>`;
   }
 
+  return body;
+}
+
+function generateFilter(host: NetworkPlanHost): string {
+  let body = "";
+
+  if (host.role === "edge_firewall") {
+    body += generateWanGuiRule();
+  }
+
+  body += generateInternalAllowRules(host);
+
   return `\t<filter>${body}
 \t</filter>`;
 }
@@ -326,7 +445,7 @@ function generateFilter(host: NetworkPlanHost): string {
 function patchConfigXml(baseXml: string, host: NetworkPlanHost): string {
   let xml = baseXml;
 
-  xml = replaceSystemHostnameAndGateway(xml, host);
+  xml = patchSystemGateway(xml, host);
   xml = replaceTag(xml, "interfaces", generateInterfaces(host));
   xml = replaceTag(xml, "gateways", generateGateways(host));
   xml = replaceTag(xml, "staticroutes", generateStaticRoutes(host));
@@ -334,6 +453,39 @@ function patchConfigXml(baseXml: string, host: NetworkPlanHost): string {
   xml = replaceTag(xml, "filter", generateFilter(host));
 
   return xml;
+}
+
+function runInternalPfSenseCutover(
+  generatedLabDir: string,
+  cfg: SshConfig,
+  host: NetworkPlanHost
+): void {
+  if (host.role !== "internal_firewall") return;
+
+  if (!host.default_gateway) {
+    throw new Error(`default_gateway manquant pour ${host.id}`);
+  }
+
+  const sshCommand = process.platform === "win32" ? "ssh.exe" : "ssh";
+
+  run(
+    sshCommand,
+    sshArgs(
+      cfg,
+      [
+        "sudo /etc/rc.reload_all || true",
+        "sleep 10",
+        "sudo ifconfig em0 down || true",
+        "sudo route delete default >/dev/null 2>&1 || true",
+        `sudo route add default ${host.default_gateway} || true`,
+        "netstat -rn",
+        "ping -c 2 8.8.8.8 || true"
+      ].join(" && ")
+    ),
+    generatedLabDir,
+    `Cutover gateway pfSense interne ${host.id}`,
+    true
+  );
 }
 
 export function patchLivePfSenseConfigs(
@@ -370,7 +522,7 @@ export function patchLivePfSenseConfigs(
 
     fs.writeFileSync(patchedPath, patchedXml, "utf-8");
 
-         run(
+    run(
       scpCommand,
       scpArgs(cfg, patchedPath, "/tmp/config.xml"),
       generatedLabDir,
@@ -384,8 +536,7 @@ export function patchLivePfSenseConfigs(
         "sudo cp /tmp/config.xml /cf/conf/config.xml && sudo chmod 600 /cf/conf/config.xml"
       ),
       generatedLabDir,
-      `Application config.xml patché ${vmName}`,
-      false
+      `Application config.xml patché ${vmName}`
     );
 
     run(
@@ -395,5 +546,13 @@ export function patchLivePfSenseConfigs(
       `Reboot pfSense ${vmName}`,
       true
     );
+
+    if (host.role === "internal_firewall") {
+      console.log(`[pfSense patch] Attente reboot ${vmName} avant cutover runtime...`);
+      sleepMs(45000);
+
+      const cfgAfterReboot = getVagrantSshConfig(generatedLabDir, vmName);
+      runInternalPfSenseCutover(generatedLabDir, cfgAfterReboot, host);
+    }
   }
 }

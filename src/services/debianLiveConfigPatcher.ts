@@ -11,19 +11,24 @@ type SshConfig = {
 };
 
 function sleepSeconds(seconds: number): void {
-  const command = process.platform === "win32" ? "timeout.exe" : "sleep";
-  const args = process.platform === "win32"
-    ? ["/T", String(seconds), "/NOBREAK"]
-    : [String(seconds)];
+  if (process.platform === "win32") {
+    spawnSync("powershell.exe", ["-NoProfile", "-Command", `Start-Sleep -Seconds ${seconds}`], {
+      stdio: "inherit",
+      shell: false
+    });
+    return;
+  }
 
-  spawnSync(command, args, { stdio: "inherit", shell: true });
+  spawnSync("sleep", [String(seconds)], {
+    stdio: "inherit",
+    shell: false
+  });
 }
-
 function run(command: string, args: string[], cwd: string, label: string, allowFailure = false): string {
   console.log(`\n[Debian patch] ${label}`);
   console.log(`${command} ${args.join(" ")}`);
 
-  const maxAttempts = 5;
+  const maxAttempts = 30;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const result = spawnSync(command, args, {
@@ -47,8 +52,8 @@ function run(command: string, args: string[], cwd: string, label: string, allowF
       stderr.includes("Connection timed out");
 
     if (retryable && attempt < maxAttempts) {
-      console.log(`[Debian patch] SSH/SCP pas prêt, retry ${attempt}/${maxAttempts} dans 10s...`);
-      sleepSeconds(10);
+      console.log(`[Debian patch] SSH/SCP pas prêt, retry ${attempt}/${maxAttempts} dans 15s...`);
+      sleepSeconds(15);
       continue;
     }
 

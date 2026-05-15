@@ -25,13 +25,7 @@ type WazuhTarget = {
   secrets: WazuhSecrets;
 };
 
-function run(
-  command: string,
-  args: string[],
-  cwd: string,
-  label: string,
-  allowFailure = false
-): string {
+function run(command: string, args: string[], cwd: string, label: string, allowFailure = false): string {
   console.log(`\n[Wazuh patch] ${label}`);
   console.log(`${command} ${args.join(" ")}`);
 
@@ -68,7 +62,7 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
-function randomPassword(length = 28): string {
+function randomPassword(length = 24): string {
   const lower = "abcdefghijkmnopqrstuvwxyz";
   const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
   const digits = "23456789";
@@ -113,7 +107,6 @@ function readJsonFile<T>(filePath: string): T {
   if (!fs.existsSync(filePath)) {
     throw new Error(`[Wazuh patch] Fichier introuvable: ${filePath}`);
   }
-
   return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
 }
 
@@ -129,18 +122,51 @@ function cleanIp(value: unknown): string {
 function findHostIp(host: NetworkPlanHost): string {
   const h = host as any;
 
-  if (h.ip) return cleanIp(h.ip);
+  const getValueIp = (value: any): string | null => {
+    if (value === undefined || value === null || value === "") return null;
+    return cleanIp(value);
+  };
+
+  const directIp =
+    getValueIp(h.ip) ??
+    getValueIp(h.ip_address) ??
+    getValueIp(h.address) ??
+    getValueIp(h.ipv4) ??
+    getValueIp(h.private_ip);
+
+  if (directIp) return directIp;
 
   if (Array.isArray(h.interfaces)) {
-    const socIface = h.interfaces.find((i: any) =>
-      String(i.name ?? i.network_id ?? i.zone ?? "").toLowerCase().includes("soc") ||
-      String(i.network_id ?? "").toLowerCase().includes("soc-net")
-    );
+    const getIfaceIp = (i: any): string | null => {
+      return (
+        getValueIp(i.ip) ??
+        getValueIp(i.ip_address) ??
+        getValueIp(i.address) ??
+        getValueIp(i.ipv4) ??
+        getValueIp(i.private_ip)
+      );
+    };
 
-    if (socIface?.ip) return cleanIp(socIface.ip);
+    const preferredIface = h.interfaces.find((i: any) => {
+      const marker = String(
+        i.name ??
+          i.network_id ??
+          i.network ??
+          i.zone ??
+          i.zone_id ??
+          i.label ??
+          ""
+      ).toLowerCase();
 
-    const firstWithIp = h.interfaces.find((i: any) => i?.ip);
-    if (firstWithIp?.ip) return cleanIp(firstWithIp.ip);
+      return marker.includes("soc") || marker.includes("wazuh");
+    });
+
+    const preferredIp = preferredIface ? getIfaceIp(preferredIface) : null;
+    if (preferredIp) return preferredIp;
+
+    const firstWithIp = h.interfaces.find((i: any) => getIfaceIp(i));
+    const firstIp = firstWithIp ? getIfaceIp(firstWithIp) : null;
+    if (firstIp) return firstIp;
   }
 
   throw new Error(`[Wazuh patch] IP Wazuh introuvable ou ambiguë: ${JSON.stringify(host, null, 2)}`);
@@ -316,6 +342,7 @@ function scpArgs(ssh: SshConfig, localPath: string, remotePath: string): string[
 
 function buildInstallScript(target: WazuhTarget): string {
   const wazuhIp = findHostIp(target.host);
+  console.log(`[Wazuh patch] IP détectée pour ${target.vmName}: ${wazuhIp}`);
 
   const script = `#!/usr/bin/env bash
 set -Eeuo pipefail
@@ -336,23 +363,21 @@ stop_wazuh_manager_cleanly() {
   systemctl stop wazuh-manager 2>/dev/null || true
   /var/ossec/bin/wazuh-control stop 2>/dev/null || true
 
-  # Ne surtout pas faire: pkill -f wazuh
-  # Sinon on tue aussi le script courant /tmp/wazuh-1-install-wazuh.sh.
-  for proc in \
-    wazuh-apid \
-    wazuh-csyslogd \
-    wazuh-dbd \
-    wazuh-integratord \
-    wazuh-agentlessd \
-    wazuh-authd \
-    wazuh-db \
-    wazuh-execd \
-    wazuh-analysisd \
-    wazuh-syscheckd \
-    wazuh-remoted \
-    wazuh-logcollector \
-    wazuh-monitord \
-    wazuh-modulesd \
+  for proc in \\
+    wazuh-apid \\
+    wazuh-csyslogd \\
+    wazuh-dbd \\
+    wazuh-integratord \\
+    wazuh-agentlessd \\
+    wazuh-authd \\
+    wazuh-db \\
+    wazuh-execd \\
+    wazuh-analysisd \\
+    wazuh-syscheckd \\
+    wazuh-remoted \\
+    wazuh-logcollector \\
+    wazuh-monitord \\
+    wazuh-modulesd \\
     wazuh-clusterd; do
     pkill -x "$proc" 2>/dev/null || true
   done
@@ -383,53 +408,90 @@ fix_manager_permissions() {
 fix_wazuh_manager_runtime() {
   log "FIX WAZUH MANAGER RUNTIME DIRS"
 
-  stop_wazuh_manager_cleanly
-
-  mkdir -p \
-    /var/ossec/queue/db \
-    /var/ossec/queue/syscheck \
-    /var/ossec/queue/alerts \
-    /var/ossec/queue/sockets \
-    /var/ossec/queue/fts \
-    /var/ossec/stats \
-    /var/ossec/backup/db \
-    /var/ossec/tmp \
-    /var/ossec/logs \
-    /var/ossec/etc/shared/default \
-    /var/ossec/api/configuration/security \
+  mkdir -p \\
+    /var/ossec/etc/shared/default \\
+    /var/ossec/queue/db \\
+    /var/ossec/queue/rids \\
+    /var/ossec/queue/fts \\
+    /var/ossec/queue/syscheck \\
+    /var/ossec/queue/alerts \\
+    /var/ossec/queue/sockets \\
+    /var/ossec/queue/tasks \\
+    /var/ossec/queue/diff \\
+    /var/ossec/queue/diff/wazuh-1 \\
+    /var/ossec/stats \\
+    /var/ossec/backup/db \\
+    /var/ossec/tmp \\
+    /var/ossec/logs \\
+    /var/ossec/var \\
+    /var/ossec/api/configuration/security \\
     /var/ossec/api/configuration/ssl
 
   touch /var/ossec/etc/shared/default/merged.mg
   touch /var/ossec/queue/fts/hostinfo
   touch /var/ossec/queue/fts/fts-queue
 
-  rm -f /var/ossec/stats/weekly-average
+  install -o root -g wazuh -m 640 /dev/null /var/ossec/etc/client.keys
 
-  chown -R root:wazuh /var/ossec/queue
+  rm -rf /var/ossec/var/start-script-lock
+  rm -f /var/ossec/var/run/*.start /var/ossec/var/run/*.failed /var/ossec/var/run/*.pid 2>/dev/null || true
+
+  chown root:wazuh /var/ossec
+  chmod 750 /var/ossec
+
+  chown -R root:wazuh /var/ossec/etc/shared
+  chmod -R 750 /var/ossec/etc/shared
+  chmod 660 /var/ossec/etc/shared/default/merged.mg || true
+
+  chown -R wazuh:wazuh /var/ossec/queue/db
+  chmod -R 770 /var/ossec/queue/db
+  find /var/ossec/queue/db -type f -name "*.db" -exec chown wazuh:wazuh {} \\; 2>/dev/null || true
+  find /var/ossec/queue/db -type f -name "*.db" -exec chmod 660 {} \\; 2>/dev/null || true
+
+  chown -R root:wazuh /var/ossec/queue/rids
+  chmod -R 770 /var/ossec/queue/rids
+
+  chown -R root:wazuh /var/ossec/queue/fts
+  chmod -R 770 /var/ossec/queue/fts
+
+  chown -R root:wazuh /var/ossec/queue/syscheck
+  chown -R root:wazuh /var/ossec/queue/alerts
+  chown -R root:wazuh /var/ossec/queue/sockets
+  chmod -R 770 /var/ossec/queue/syscheck
+  chmod -R 770 /var/ossec/queue/alerts
+  chmod -R 770 /var/ossec/queue/sockets
+
+  chown -R wazuh:wazuh /var/ossec/queue/tasks
+  chown -R wazuh:wazuh /var/ossec/queue/diff
+  chmod -R 770 /var/ossec/queue/tasks
+  chmod -R 770 /var/ossec/queue/diff
+
+  chown -R wazuh:wazuh /var/ossec/logs
+  chown -R wazuh:wazuh /var/ossec/var
+  chmod -R 770 /var/ossec/logs
+  chmod -R 770 /var/ossec/var
+
   chown -R root:wazuh /var/ossec/stats
+  chmod -R 770 /var/ossec/stats
+
   chown -R root:wazuh /var/ossec/backup
   chown -R root:wazuh /var/ossec/tmp
-  chown -R root:wazuh /var/ossec/var
-  chown -R root:wazuh /var/ossec/etc/shared
-  chown -R root:wazuh /var/ossec/etc/lists 2>/dev/null || true
+  chmod -R 770 /var/ossec/backup
+  chmod -R 770 /var/ossec/tmp
 
   chown -R wazuh:wazuh /var/ossec/api/configuration/security
   chown -R wazuh:wazuh /var/ossec/api/configuration/ssl
-  chown -R wazuh:wazuh /var/ossec/logs
-
-  chmod 750 /var/ossec
-  chmod -R 770 /var/ossec/queue
-  chmod -R 770 /var/ossec/stats
-  chmod -R 770 /var/ossec/backup
-  chmod -R 770 /var/ossec/tmp
-  chmod -R 770 /var/ossec/var
-  chmod -R 770 /var/ossec/logs
-  chmod -R 750 /var/ossec/etc/shared
   chmod -R 750 /var/ossec/api
-  chmod -R 770 /var/ossec/etc/lists 2>/dev/null || true
 
   chmod 600 /var/ossec/api/configuration/ssl/server.key 2>/dev/null || true
   chmod 644 /var/ossec/api/configuration/ssl/server.crt 2>/dev/null || true
+
+  if [ -d /var/ossec/etc/lists ]; then
+    chown -R root:wazuh /var/ossec/etc/lists || true
+    chmod -R 770 /var/ossec/etc/lists || true
+    find /var/ossec/etc/lists -type f -exec chmod 660 {} \\; || true
+    find /var/ossec/etc/lists -type d -exec chmod 770 {} \\; || true
+  fi
 
   fix_manager_permissions
 }
@@ -451,6 +513,36 @@ wait_indexer() {
       exit 1
     fi
   done
+}
+
+wait_dashboard_ready() {
+  local timeout=240
+  local elapsed=0
+
+  while [ "$elapsed" -lt "$timeout" ]; do
+    local status
+    status=$(curl -sk -o /tmp/wazuh-dashboard-status.out -w "%{http_code}" https://127.0.0.1/api/status || true)
+
+    if [ "$status" = "200" ] || [ "$status" = "302" ] || [ "$status" = "401" ]; then
+      echo "[OK] Wazuh dashboard HTTP ready: $status"
+      cat /tmp/wazuh-dashboard-status.out || true
+      echo
+      return 0
+    fi
+
+    echo "waiting dashboard API https://127.0.0.1/api/status... status=$status"
+    cat /tmp/wazuh-dashboard-status.out || true
+    echo
+    journalctl -u wazuh-dashboard --no-pager -n 30 || true
+    sleep 10
+    elapsed=$((elapsed + 10))
+  done
+
+  echo "[ERROR] Wazuh dashboard not ready after timeout"
+  curl -sk -i https://127.0.0.1/api/status || true
+  journalctl -u wazuh-dashboard --no-pager -n 180 || true
+  tail -n 120 /var/log/wazuh-indexer/wazuh-cluster.log 2>/dev/null || true
+  exit 1
 }
 
 wait_manager_ports() {
@@ -521,6 +613,7 @@ apt-get install -y wazuh-indexer wazuh-manager wazuh-dashboard filebeat
 
 log "STOP SERVICES"
 systemctl stop filebeat wazuh-dashboard wazuh-manager wazuh-indexer 2>/dev/null || true
+stop_wazuh_manager_cleanly || true
 
 log "PREPARE /data"
 mkdir -p /data/wazuh-indexer /data/wazuh-manager
@@ -672,11 +765,45 @@ admin:
 kibanaserver:
   hash: "$DASHBOARD_HASH"
   reserved: true
+  backend_roles:
+    - "kibana_server"
   description: "Wazuh dashboard server user"
 EOF
 
 chown wazuh-indexer:wazuh-indexer /etc/wazuh-indexer/opensearch-security/internal_users.yml
 chmod 640 /etc/wazuh-indexer/opensearch-security/internal_users.yml
+
+log "FIX ROLES MAPPING FOR DASHBOARD"
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+p = Path("/etc/wazuh-indexer/opensearch-security/roles_mapping.yml")
+s = p.read_text()
+
+replacement = '''all_access:
+  reserved: true
+  hidden: false
+  backend_roles:
+  - "admin"
+  - "kibana_server"
+  hosts: []
+  users:
+  - "admin"
+  - "kibanaserver"
+  and_backend_roles: []
+  description: "Maps admin and dashboard service user to all_access for lab automation"'''
+
+if "all_access:" in s:
+    start = s.index("all_access:")
+    next_match = re.search(r"\\n[^\\s][^\\n]*:\\n", s[start + 1:])
+    end = start + 1 + next_match.start() if next_match else len(s)
+    s = s[:start] + replacement + "\\n" + s[end:]
+else:
+    s += "\\n" + replacement + "\\n"
+
+p.write_text(s)
+PY
 
 log "INITIALIZE INDEXER SECURITY"
 mkdir -p /etc/wazuh-indexer/backup /etc/wazuh-indexer/internalusers-backup
@@ -685,14 +812,15 @@ chmod -R u+rwX,g+rX,o-rwx /etc/wazuh-indexer/backup /etc/wazuh-indexer/internalu
 
 cd /etc/wazuh-indexer
 
-if ! /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh \
-  -cd /etc/wazuh-indexer/opensearch-security/ \
-  -icl \
-  -nhnv \
-  -cacert /etc/wazuh-indexer/certs/root-ca.pem \
-  -cert /etc/wazuh-indexer/certs/admin.pem \
-  -key /etc/wazuh-indexer/certs/admin-key.pem \
-  -h "$WAZUH_IP"; then
+if ! /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh \\
+  -cd /etc/wazuh-indexer/opensearch-security/ \\
+  -icl \\
+  -nhnv \\
+  -cacert /etc/wazuh-indexer/certs/root-ca.pem \\
+  -cert /etc/wazuh-indexer/certs/admin.pem \\
+  -key /etc/wazuh-indexer/certs/admin-key.pem \\
+  -h "$WAZUH_IP" \\
+  -p 9200; then
   echo "[ERROR] securityadmin.sh failed"
   journalctl -u wazuh-indexer --no-pager -n 120 || true
   tail -n 120 /var/log/wazuh-indexer/wazuh-cluster.log 2>/dev/null || true
@@ -735,6 +863,15 @@ if [ "$SECURITY_READY" -ne 1 ]; then
   exit 1
 fi
 
+log "VERIFY DASHBOARD USER AUTH"
+for i in $(seq 1 20); do
+  DASH_AUTH=$(curl -sk -u "$DASHBOARD_USER:$DASHBOARD_PASSWORD" "https://$WAZUH_IP:9200/_plugins/_security/authinfo?pretty" || true)
+  echo "$DASH_AUTH"
+  echo "$DASH_AUTH" | grep -q '"user_name" : "kibanaserver"' && break
+  echo "waiting dashboard user auth..."
+  sleep 3
+done
+
 log "CONFIGURE MANAGER KEYSTORE"
 if [ -x /var/ossec/bin/wazuh-keystore ]; then
   /var/ossec/bin/wazuh-keystore -f indexer -k username -v "$INDEXER_ADMIN_USER"
@@ -747,22 +884,59 @@ log "CONFIGURE DASHBOARD"
 cat > /etc/wazuh-dashboard/opensearch_dashboards.yml <<EOF
 server.host: 0.0.0.0
 server.port: 443
+server.ssl.enabled: true
+server.ssl.certificate: "/etc/wazuh-dashboard/certs/wazuh-dashboard.pem"
+server.ssl.key: "/etc/wazuh-dashboard/certs/wazuh-dashboard-key.pem"
+
 opensearch.hosts: ["https://$WAZUH_IP:9200"]
 opensearch.ssl.verificationMode: certificate
 opensearch.ssl.certificateAuthorities: ["/etc/wazuh-dashboard/certs/root-ca.pem"]
 opensearch.username: "$DASHBOARD_USER"
 opensearch.password: "$DASHBOARD_PASSWORD"
-server.ssl.enabled: true
-server.ssl.certificate: "/etc/wazuh-dashboard/certs/wazuh-dashboard.pem"
-server.ssl.key: "/etc/wazuh-dashboard/certs/wazuh-dashboard-key.pem"
-uiSettings.overrides.defaultRoute: /app/wazuh
+opensearch.ignoreVersionMismatch: true
+opensearch.requestHeadersAllowlist: ["securitytenant", "Authorization"]
+
+opensearch_security.multitenancy.enabled: true
+opensearch_security.multitenancy.tenants.preferred: ["Global"]
+opensearch_security.readonly_mode.roles: ["kibana_read_only"]
 EOF
 
 chown root:wazuh-dashboard /etc/wazuh-dashboard/opensearch_dashboards.yml
 chmod 640 /etc/wazuh-dashboard/opensearch_dashboards.yml
 
+log "FORCE DASHBOARD SERVICE TO USE /etc CONFIG"
+mkdir -p /usr/share/wazuh-dashboard/config
+cp -f /etc/wazuh-dashboard/opensearch_dashboards.yml /usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+chown wazuh-dashboard:wazuh-dashboard /usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+chmod 640 /usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+
+if [ -f /etc/systemd/system/wazuh-dashboard.service ]; then
+  sed -i 's#^ExecStart=.*#ExecStart=/usr/share/wazuh-dashboard/bin/opensearch-dashboards --config /etc/wazuh-dashboard/opensearch_dashboards.yml#' /etc/systemd/system/wazuh-dashboard.service
+fi
+
+systemctl daemon-reload
+
+log "REMOVE STALE DASHBOARD KEYSTORE ENTRIES"
+if [ -x /usr/share/wazuh-dashboard/bin/opensearch-dashboards-keystore ]; then
+  sudo -u wazuh-dashboard /usr/share/wazuh-dashboard/bin/opensearch-dashboards-keystore remove opensearch.username 2>/dev/null || true
+  sudo -u wazuh-dashboard /usr/share/wazuh-dashboard/bin/opensearch-dashboards-keystore remove opensearch.password 2>/dev/null || true
+  sudo -u wazuh-dashboard /usr/share/wazuh-dashboard/bin/opensearch-dashboards-keystore list || true
+fi
+
 log "CONFIGURE FILEBEAT"
 mkdir -p /etc/filebeat/modules.d
+
+log "INSTALL WAZUH FILEBEAT MODULE"
+rm -rf /usr/share/filebeat/module/wazuh
+mkdir -p /usr/share/filebeat/module/wazuh
+curl -fsSL https://packages.wazuh.com/4.x/filebeat/wazuh-filebeat-0.4.tar.gz -o /tmp/wazuh-filebeat.tar.gz
+tar -xzf /tmp/wazuh-filebeat.tar.gz -C /usr/share/filebeat/module/wazuh --strip-components=1
+
+if [ ! -f /usr/share/filebeat/module/wazuh/alerts/manifest.yml ]; then
+  echo "[ERROR] Module Filebeat Wazuh mal installé"
+  find /usr/share/filebeat/module/wazuh -maxdepth 3 -type f | head -n 50
+  exit 1
+fi
 
 cat > /etc/filebeat/modules.d/wazuh.yml <<'EOF'
 - module: wazuh
@@ -772,6 +946,12 @@ cat > /etc/filebeat/modules.d/wazuh.yml <<'EOF'
   archives:
     enabled: false
 EOF
+
+log "INSTALL WAZUH ALERTS TEMPLATE"
+curl -fsSL https://raw.githubusercontent.com/wazuh/wazuh/v4.14.5/extensions/elasticsearch/7.x/wazuh-template.json \\
+  -o /etc/filebeat/wazuh-template.json
+
+chmod 644 /etc/filebeat/wazuh-template.json
 
 cat > /etc/filebeat/filebeat.yml <<EOF
 filebeat.modules:
@@ -783,10 +963,11 @@ filebeat.modules:
       enabled: false
 
 setup.template.json.enabled: true
-setup.template.json.path: '/etc/filebeat/wazuh-template.json'
-setup.template.json.name: 'wazuh'
-setup.ilm.enabled: false
+setup.template.json.path: "/etc/filebeat/wazuh-template.json"
+setup.template.json.name: "wazuh"
+setup.template.pattern: "wazuh-alerts-*"
 setup.template.overwrite: true
+setup.ilm.enabled: false
 
 output.elasticsearch:
   hosts: ["https://$WAZUH_IP:9200"]
@@ -806,10 +987,6 @@ logging.files:
 EOF
 
 chmod 600 /etc/filebeat/filebeat.yml
-
-if [ ! -f /etc/filebeat/wazuh-template.json ]; then
-  curl -fsSL https://packages.wazuh.com/4.x/filebeat/wazuh-template.json -o /etc/filebeat/wazuh-template.json || true
-fi
 
 log "FIX + START WAZUH MANAGER"
 fix_wazuh_manager_runtime
@@ -834,8 +1011,41 @@ wait_manager_ports
 
 log "START DASHBOARD + FILEBEAT"
 systemctl restart filebeat || true
-systemctl restart wazuh-dashboard || true
-sleep 12
+
+log "SETUP FILEBEAT WAZUH ALERTS TEMPLATE"
+filebeat setup --index-management \\
+  -E setup.template.json.enabled=true \\
+  -E setup.template.json.path=/etc/filebeat/wazuh-template.json \\
+  -E setup.template.json.name=wazuh \\
+  -E setup.template.pattern="wazuh-alerts-*" \\
+  -E setup.template.overwrite=true \\
+  -E setup.ilm.enabled=false \\
+  -E output.elasticsearch.hosts=["https://$WAZUH_IP:9200"] \\
+  -E output.elasticsearch.username="$INDEXER_ADMIN_USER" \\
+  -E output.elasticsearch.password="$INDEXER_ADMIN_PASSWORD" || {
+    echo "[ERROR] Filebeat template setup failed"
+    journalctl -u filebeat --no-pager -n 120 || true
+    exit 1
+  }
+
+systemctl restart filebeat
+systemctl restart wazuh-dashboard
+sleep 20
+wait_dashboard_ready
+
+log "DASHBOARD DIAGNOSTICS"
+echo "--- DASHBOARD PROCESS CMDLINE ---"
+tr '\\0' ' ' < /proc/$(pidof node)/cmdline 2>/dev/null || true
+echo
+
+echo "--- DASHBOARD CONFIG ---"
+grep -nE "opensearch.hosts|opensearch.username|opensearch.password|ignoreVersion|server.port|server.ssl|defaultRoute" /etc/wazuh-dashboard/opensearch_dashboards.yml || true
+
+echo "--- DASHBOARD LOCAL ROOT ---"
+curl -sk -I https://127.0.0.1 || true
+
+echo "--- DASHBOARD JOURNAL ---"
+journalctl -u wazuh-dashboard --no-pager -n 120 || true
 
 log "VALIDATE MANAGER TO INDEXER"
 grep -iE "indexer|unauthorized|auth|failed|error|connection|initialized successfully" /var/ossec/logs/ossec.log | tail -n 180 || true
@@ -850,6 +1060,10 @@ if [ "$FB_CODE" -ne 0 ]; then
   echo "[WARN] filebeat test output KO. Non bloquant."
   journalctl -u filebeat --no-pager -n 80 || true
 fi
+
+log "VALIDATE WAZUH ALERTS TEMPLATE AND INDEX"
+curl -sk -u "$INDEXER_ADMIN_USER:$INDEXER_ADMIN_PASSWORD" "https://$WAZUH_IP:9200/_cat/templates/wazuh*?v" || true
+curl -sk -u "$INDEXER_ADMIN_USER:$INDEXER_ADMIN_PASSWORD" "https://$WAZUH_IP:9200/_cat/indices/wazuh-alerts-*?v" || true
 
 log "FINAL STATUS"
 echo "--- WAZUH CONTROL ---"
@@ -867,6 +1081,7 @@ ss -lntp | grep -E ':9200|:55000|:5601|:443|:1514|:1515' || true
 echo "--- INDEXER CURL ---"
 curl -sk -u "$INDEXER_ADMIN_USER:$INDEXER_ADMIN_PASSWORD" "https://$WAZUH_IP:9200" || true
 
+echo
 log "DONE WAZUH INSTALL"
 exit 0
 `;
@@ -974,8 +1189,10 @@ export function patchLiveWazuhConfigs(outputsDir = path.join(process.cwd(), "out
     console.log(`\n[Wazuh patch] Résumé ${target.vmName}`);
     console.log(`- IP Wazuh: ${wazuhIp}`);
     console.log(`- Dashboard: https://${wazuhIp}/`);
-    console.log(`- User indexer/dashboard: ${target.secrets.indexer_admin_user}`);
-    console.log(`- Password: ${target.secrets.indexer_admin_password}`);
+    console.log(`- Indexer user: ${target.secrets.indexer_admin_user}`);
+    console.log(`- Indexer password: ${target.secrets.indexer_admin_password}`);
+    console.log(`- Dashboard user: ${target.secrets.dashboard_user}`);
+    console.log(`- Dashboard password: ${target.secrets.dashboard_password}`);
     console.log(`- Secrets: ${path.join(generatedLabDir, "secrets", "wazuh-global-credentials.json")}`);
   }
 }

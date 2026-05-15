@@ -293,7 +293,67 @@ function waitSeconds(seconds: number): void {
   }
 }
 
-function main() {
+function vagrantExists(vmName: string, generatedLabDir: string): boolean {
+  const command = process.platform === "win32" ? "vagrant.exe" : "vagrant";
+
+  const result = spawnSync(command, ["status", vmName], {
+    cwd: generatedLabDir,
+    encoding: "utf-8",
+    shell: true
+  });
+
+  return result.status === 0 && !result.stdout.includes("The machine with the name");
+}
+
+function waitForVmSsh(vmName: string, generatedLabDir: string, timeoutSeconds = 300): void {
+  const command = process.platform === "win32" ? "vagrant.exe" : "vagrant";
+
+  if (!vagrantExists(vmName, generatedLabDir)) {
+    console.log(`[infra] VM absente, skip wait SSH: ${vmName}`);
+    return;
+  }
+
+  const startedAt = Date.now();
+
+  while ((Date.now() - startedAt) / 1000 < timeoutSeconds) {
+    console.log(`[infra] Test SSH ${vmName}...`);
+
+    const result = spawnSync(command, ["ssh", "-c", "echo ready", vmName], {
+      cwd: generatedLabDir,
+      encoding: "utf-8",
+      shell: false,
+      timeout: 30000
+    });
+
+    if (result.status === 0 && result.stdout.includes("ready")) {
+      console.log(`[infra] SSH OK pour ${vmName}`);
+      return;
+    }
+
+    if (result.stdout) console.warn(result.stdout.trim());
+    if (result.stderr) console.warn(result.stderr.trim());
+
+    waitSeconds(10);
+  }
+
+  throw new Error(`[infra] SSH non prêt pour ${vmName} après ${timeoutSeconds}s`);
+}
+
+function waitForDebianSsh(generatedLabDir: string): void {
+  const debianVms = [
+    "bastion-1",
+    "reverse-proxy-1",
+    "db-server-1",
+    "wazuh-1",
+    "zabbix-1"
+  ];
+
+  for (const vmName of debianVms) {
+    waitForVmSsh(vmName, generatedLabDir, 300);
+  }
+}
+
+function main(): void {
   const userPrompt = process.argv.slice(2).join(" ").trim();
 
   if (!userPrompt) {
@@ -316,9 +376,6 @@ function main() {
 
   const patchedPfSenseDir = path.join(outputRoot, "pfsense-live-patched");
   const patchedDebianDir = path.join(outputRoot, "debian-live-patched");
-  const patchedWazuhDir = path.join(outputRoot, "wazuh-live-patched");
-  const patchedWazuhAgentDir = path.join(outputRoot, "wazuh-agent-live-patched");
-  const sshAccessFile = path.join(outputRoot, "ssh-access.local.json");
 
   fs.mkdirSync(outputRoot, { recursive: true });
 
@@ -334,40 +391,7 @@ function main() {
   console.log("Lab definition généré :", definitionFile);
   console.log(JSON.stringify(definition, null, 2));
 
-  const generator = new LabGeneratorService();
-
-  const result = generator.generateLab({
-    ...definition,
-    outputDir: generatedLabDir
-  });
-
-  const generatedDefinitionPath = path.join(
-    generatedLabDir,
-    "lab-definition.json"
-  );
-
-  let generatedDefinition: LabDefinition = definition;
-
-  if (fs.existsSync(generatedDefinitionPath)) {
-    const generatedFromFile = JSON.parse(
-      fs.readFileSync(generatedDefinitionPath, "utf-8")
-    ) as Partial<LabDefinition>;
-
-    generatedDefinition = {
-      ...definition,
-      ...generatedFromFile,
-      required_roles: generatedFromFile.required_roles ?? definition.required_roles,
-      instances: generatedFromFile.instances ?? definition.instances ?? []
-    };
-  }
-
-  fs.writeFileSync(
-    definitionFile,
-    JSON.stringify(generatedDefinition, null, 2),
-    "utf-8"
-  );
-
-  const policyResult = validateLabWithPolicies(generatedDefinition, {
+  const policyResult = validateLabWithPolicies(definition, {
     projectRoot: process.cwd()
   });
 
@@ -390,9 +414,21 @@ function main() {
 
   console.log("Validation policies générée :", policyValidationFile);
 
-  generateNetworkPlanFromDefinition(generatedDefinition, outputRoot);
+  generateNetworkPlanFromDefinition(definition, outputRoot);
+
+  if (!fs.existsSync(networkPlanFile)) {
+    throw new Error(`[infra] network-plan.json non généré: ${networkPlanFile}`);
+  }
 
   console.log("Network plan généré :", networkPlanFile);
+
+  const generator = new LabGeneratorService();
+
+  const result = generator.generateLab({
+    ...definition,
+    outputDir: generatedLabDir
+  });
+
   console.log("Résultat génération :", result);
   console.log("Vagrantfile généré dans :", generatedLabDir);
 
@@ -414,13 +450,17 @@ function main() {
     throw new Error(`vagrant up a échoué avec le code ${upResult.status}`);
   }
 
+  waitSeconds(30);
+
   patchLivePfSenseConfigs(
     generatedLabDir,
     networkPlanFile,
     patchedPfSenseDir
   );
 
-  waitSeconds(45);
+  waitSeconds(30);
+
+  waitForDebianSsh(generatedLabDir);
 
   patchLiveDebianConfigs(
     generatedLabDir,
@@ -428,22 +468,17 @@ function main() {
     patchedDebianDir
   );
 
-  waitSeconds(20);
+  waitSeconds(30);
 
-  patchLiveWazuhConfigs(
-    generatedLabDir,
-    networkPlanFile,
-    patchedWazuhDir
-  );
+  waitForVmSsh("wazuh-1", generatedLabDir, 300);
+
+  patchLiveWazuhConfigs(outputRoot);
 
   waitSeconds(10);
 
-  patchLiveWazuhAgents(
-    generatedLabDir,
-    networkPlanFile,
-    patchedWazuhAgentDir,
-    sshAccessFile
-  );
+  waitForDebianSsh(generatedLabDir);
+
+  patchLiveWazuhAgents(outputRoot);
 
   console.log("\nInfra complète déployée : pfSense + Debian + Wazuh + agents Wazuh.");
 }
