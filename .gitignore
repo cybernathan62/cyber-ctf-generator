@@ -47,4 +47,11 @@ Backup/
 .DS_Store
 Thumbs.db
 .vscode/
-.idea/
+.idea/create-dashboard-index.json
+curl-kibana.conf
+netrc-kibana
+opensearch_dashboards-admin.yml
+opensearch_dashboards-kibana.yml
+opensearch_dashboards.yml
+test-kibana.sh
+test-wazuh-auth.sh
