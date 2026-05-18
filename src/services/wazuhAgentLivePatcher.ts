@@ -60,12 +60,43 @@ function ensureDir(dir: string): void {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
+function writeTextAtomic(filePath: string, content: string, mode = 0o600): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+  const tmpPath = `${filePath}.tmp`;
+
+  fs.writeFileSync(tmpPath, content, {
+    encoding: "utf-8",
+    mode
+  });
+
+  fs.renameSync(tmpPath, filePath);
+}
+
+function sshSecurityOptions(): string[] {
+  const mode = process.env.SSH_TRUST_MODE ?? "lab";
+
+  if (mode === "production") {
+    return ["-o", "StrictHostKeyChecking=yes"];
+  }
+
+  return [
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null"
+  ];
+}
+
 function readJsonFile<T>(filePath: string): T {
   if (!fs.existsSync(filePath)) {
     throw new Error(`[Wazuh agent] Fichier introuvable: ${filePath}`);
   }
 
-  return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[Wazuh agent] JSON invalide dans ${filePath}: ${message}`);
+  }
 }
 
 function cleanIp(value: unknown): string {
@@ -271,10 +302,7 @@ function sshArgs(ssh: SshConfig, remoteCommand: string): string[] {
     ssh.identityFile,
     "-p",
     ssh.port,
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "UserKnownHostsFile=/dev/null",
+    ...sshSecurityOptions(),
     "-o",
     "LogLevel=ERROR",
     `${ssh.user}@${ssh.hostName}`,
@@ -288,10 +316,7 @@ function scpArgs(ssh: SshConfig, localPath: string, remotePath: string): string[
     ssh.identityFile,
     "-P",
     ssh.port,
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "UserKnownHostsFile=/dev/null",
+    ...sshSecurityOptions(),
     "-o",
     "LogLevel=ERROR",
     localPath,
@@ -408,7 +433,7 @@ function createRuntimeFiles(generatedLabDir: string, target: AgentTarget, script
   ensureDir(runtimeDir);
 
   const scriptPath = path.join(runtimeDir, `${target.vmName}-install-wazuh-agent.sh`);
-  fs.writeFileSync(scriptPath, script, "utf-8");
+    writeTextAtomic(scriptPath, script, 0o700);
 
   return scriptPath;
 }

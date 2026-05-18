@@ -12,8 +12,15 @@ type SshConfig = {
 };
 
 type WazuhSecrets = {
+  wazuh_api_url: string;
+  wazuh_api_user: string;
+  wazuh_api_password: string;
+
+  wazuh_indexer_url: string;
   indexer_admin_user: string;
   indexer_admin_password: string;
+
+  wazuh_dashboard_url: string;
   dashboard_user: string;
   dashboard_password: string;
 };
@@ -24,6 +31,52 @@ type WazuhTarget = {
   ssh: SshConfig;
   secrets: WazuhSecrets;
 };
+
+type DeploymentMode = "lab" | "production";
+
+function resolveDeploymentMode(): DeploymentMode {
+  const raw = String(
+    process.env.WAZUH_DEPLOYMENT_MODE ??
+      process.env.CTF_LAB_MODE ??
+      process.env.NODE_ENV ??
+      "lab"
+  ).toLowerCase();
+
+  if (raw === "production" || raw === "prod") return "production";
+  return "lab";
+}
+
+function isDefaultWazuhApiSecret(user: string, password: string): boolean {
+  return user === "wazuh" && password === "wazuh";
+}
+
+function requireProductionApiCredentials(existing: Partial<WazuhSecrets>): Pick<WazuhSecrets, "wazuh_api_user" | "wazuh_api_password"> {
+  const user =
+    process.env.WAZUH_API_USER ??
+    existing.wazuh_api_user;
+
+  const password =
+    process.env.WAZUH_API_PASSWORD ??
+    existing.wazuh_api_password;
+
+  if (!user || !password) {
+    throw new Error(
+      "[Wazuh patch] Mode production: credentials API Wazuh manquants. " +
+        "Crée un compte API dédié en lecture seule, puis fournis WAZUH_API_USER et WAZUH_API_PASSWORD ou un fichier secrets existant."
+    );
+  }
+
+  if (isDefaultWazuhApiSecret(user, password)) {
+    throw new Error(
+      "[Wazuh patch] Mode production refusé: credentials API par défaut wazuh/wazuh interdits."
+    );
+  }
+
+  return {
+    wazuh_api_user: user,
+    wazuh_api_password: password
+  };
+}
 
 function run(command: string, args: string[], cwd: string, label: string, allowFailure = false): string {
   console.log(`\n[Wazuh patch] ${label}`);
@@ -48,6 +101,21 @@ function run(command: string, args: string[], cwd: string, label: string, allowF
   }
 
   if (!allowFailure && result.status !== 0) {
+    const lower = label.toLowerCase();
+
+    const tolerated =
+      lower.includes("filebeat") ||
+      lower.includes("dashboard") ||
+      lower.includes("template");
+
+    if (tolerated) {
+      console.warn(
+        `[Wazuh patch] Warning non bloquant ${label} avec code ${result.status}`
+      );
+
+      return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    }
+
     throw new Error(`[Wazuh patch] Échec ${label} avec code ${result.status}`);
   }
 
@@ -102,17 +170,62 @@ function isValidWazuhPassword(value: string): boolean {
 function ensureDir(dir: string): void {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
+function writeTextAtomic(
+  filePath: string,
+  content: string,
+  mode = 0o600
+): void {
+  ensureDir(path.dirname(filePath));
+
+  const tmpPath = `${filePath}.tmp`;
+
+  fs.writeFileSync(tmpPath, content, {
+    encoding: "utf-8",
+    mode
+  });
+
+  fs.renameSync(tmpPath, filePath);
+}
+
+function sshSecurityOptions(): string[] {
+  const mode = resolveDeploymentMode();
+
+  if (mode === "production") {
+    return ["-o", "StrictHostKeyChecking=yes"];
+  }
+
+  return [
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null"
+  ];
+}
 
 function readJsonFile<T>(filePath: string): T {
   if (!fs.existsSync(filePath)) {
     throw new Error(`[Wazuh patch] Fichier introuvable: ${filePath}`);
   }
-  return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[Wazuh patch] JSON invalide dans ${filePath}: ${message}`);
+  }
 }
 
 function writeJsonFile(filePath: string, data: unknown): void {
   ensureDir(path.dirname(filePath));
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+  writeTextAtomic(
+  filePath,
+  JSON.stringify(data, null, 2),
+  0o600
+);
+
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // Windows peut ignorer partiellement chmod. Le fichier reste non versionné via .gitignore.
+  }
 }
 
 function cleanIp(value: unknown): string {
@@ -269,38 +382,47 @@ function getNetworkHosts(networkPlan: NetworkPlan): NetworkPlanHost[] {
   throw new Error("[Wazuh patch] Aucun host trouvé dans network-plan.json");
 }
 
-function loadOrCreateSecrets(generatedLabDir: string, vmName: string): WazuhSecrets {
+function loadOrCreateSecrets(
+  generatedLabDir: string,
+  vmName: string,
+  wazuhIp: string
+): WazuhSecrets {
+  const deploymentMode = resolveDeploymentMode();
   const secretsDir = path.join(generatedLabDir, "secrets");
   const filePath = path.join(secretsDir, `${vmName}-credentials.json`);
 
-  if (fs.existsSync(filePath)) {
-    const existing = readJsonFile<Partial<WazuhSecrets>>(filePath);
+  const existing = fs.existsSync(filePath)
+    ? readJsonFile<Partial<WazuhSecrets>>(filePath)
+    : {};
 
-    const secrets: WazuhSecrets = {
-      indexer_admin_user: existing.indexer_admin_user || "admin",
-      indexer_admin_password: existing.indexer_admin_password || randomPassword(),
-      dashboard_user: existing.dashboard_user || "kibanaserver",
-      dashboard_password: existing.dashboard_password || randomPassword()
-    };
-
-    if (!isValidWazuhPassword(secrets.indexer_admin_password)) {
-      secrets.indexer_admin_password = randomPassword();
-    }
-
-    if (!isValidWazuhPassword(secrets.dashboard_password)) {
-      secrets.dashboard_password = randomPassword();
-    }
-
-    writeJsonFile(filePath, secrets);
-    return secrets;
-  }
+  const apiCredentials = deploymentMode === "production"
+    ? requireProductionApiCredentials(existing)
+    : {
+        wazuh_api_user: "wazuh",
+        wazuh_api_password: "wazuh"
+      };
 
   const secrets: WazuhSecrets = {
-    indexer_admin_user: "admin",
-    indexer_admin_password: randomPassword(),
-    dashboard_user: "kibanaserver",
-    dashboard_password: randomPassword()
+    wazuh_api_url: existing.wazuh_api_url || `https://${wazuhIp}:55000`,
+    wazuh_api_user: apiCredentials.wazuh_api_user,
+    wazuh_api_password: apiCredentials.wazuh_api_password,
+
+    wazuh_indexer_url: existing.wazuh_indexer_url || `https://${wazuhIp}:9200`,
+    indexer_admin_user: existing.indexer_admin_user || "admin",
+    indexer_admin_password: existing.indexer_admin_password || randomPassword(),
+
+    wazuh_dashboard_url: existing.wazuh_dashboard_url || `https://${wazuhIp}`,
+    dashboard_user: existing.dashboard_user || "kibanaserver",
+    dashboard_password: existing.dashboard_password || randomPassword()
   };
+
+  if (!isValidWazuhPassword(secrets.indexer_admin_password)) {
+    secrets.indexer_admin_password = randomPassword();
+  }
+
+  if (!isValidWazuhPassword(secrets.dashboard_password)) {
+    secrets.dashboard_password = randomPassword();
+  }
 
   writeJsonFile(filePath, secrets);
   return secrets;
@@ -312,10 +434,7 @@ function sshArgs(ssh: SshConfig, remoteCommand: string): string[] {
     ssh.identityFile,
     "-p",
     ssh.port,
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "UserKnownHostsFile=/dev/null",
+   ...sshSecurityOptions(),
     "-o",
     "LogLevel=ERROR",
     `${ssh.user}@${ssh.hostName}`,
@@ -329,10 +448,7 @@ function scpArgs(ssh: SshConfig, localPath: string, remotePath: string): string[
     ssh.identityFile,
     "-P",
     ssh.port,
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "UserKnownHostsFile=/dev/null",
+    ...sshSecurityOptions(),
     "-o",
     "LogLevel=ERROR",
     localPath,
@@ -353,6 +469,8 @@ INDEXER_ADMIN_USER="__INDEXER_ADMIN_USER__"
 INDEXER_ADMIN_PASSWORD="__INDEXER_ADMIN_PASSWORD__"
 DASHBOARD_USER="__DASHBOARD_USER__"
 DASHBOARD_PASSWORD="__DASHBOARD_PASSWORD__"
+WAZUH_API_USER="__WAZUH_API_USER__"
+WAZUH_API_PASSWORD="__WAZUH_API_PASSWORD__"
 
 log() {
   echo
@@ -740,9 +858,42 @@ p.write_text(s)
 PY
 
 log "START INDEXER"
-systemctl daemon-reload
-systemctl enable wazuh-indexer
-systemctl restart wazuh-indexer
+
+echo "--- TUNE VM MAX MAP COUNT ---"
+sysctl -w vm.max_map_count=262144 || true
+
+grep -q "vm.max_map_count=262144" /etc/sysctl.conf || \
+echo "vm.max_map_count=262144" >> /etc/sysctl.conf
+
+echo "--- WAIT FOR JAVA WARMUP ---"
+sleep 20
+
+systemctl daemon-reload || true
+systemctl enable wazuh-indexer || true
+
+INDEXER_OK=0
+
+for i in $(seq 1 10); do
+  echo "[indexer] tentative $i"
+
+  systemctl reset-failed wazuh-indexer || true
+  systemctl restart wazuh-indexer || true
+
+  sleep 30
+
+  if systemctl is-active --quiet wazuh-indexer; then
+    echo "[OK] wazuh-indexer actif"
+    INDEXER_OK=1
+    break
+  fi
+
+  journalctl -u wazuh-indexer --no-pager -n 80 || true
+done
+
+if [ "$INDEXER_OK" -ne 1 ]; then
+  echo "[WARN] wazuh-indexer toujours KO après retries"
+fi
+
 wait_indexer
 
 log "SET INDEXER USERS BEFORE SECURITY INIT"
@@ -1010,7 +1161,31 @@ fi
 wait_manager_ports
 
 log "START DASHBOARD + FILEBEAT"
-systemctl restart filebeat || true
+
+systemctl reset-failed filebeat || true
+systemctl daemon-reload || true
+
+FILEBEAT_OK=0
+
+for i in $(seq 1 5); do
+  echo "[filebeat] tentative $i"
+
+  systemctl restart filebeat || true
+
+  sleep 15
+
+  if systemctl is-active --quiet filebeat; then
+    echo "[OK] filebeat actif"
+    FILEBEAT_OK=1
+    break
+  fi
+
+  journalctl -u filebeat --no-pager -n 40 || true
+done
+
+if [ "$FILEBEAT_OK" -ne 1 ]; then
+  echo "[WARN] filebeat toujours KO après retries"
+fi
 
 log "SETUP FILEBEAT WAZUH ALERTS TEMPLATE"
 filebeat setup --index-management \\
@@ -1028,6 +1203,7 @@ filebeat setup --index-management \\
     exit 1
   }
 
+systemctl reset-failed filebeat || true
 systemctl restart filebeat
 systemctl restart wazuh-dashboard
 sleep 20
@@ -1091,7 +1267,9 @@ exit 0
     .replaceAll("__INDEXER_ADMIN_USER__", target.secrets.indexer_admin_user)
     .replaceAll("__INDEXER_ADMIN_PASSWORD__", target.secrets.indexer_admin_password)
     .replaceAll("__DASHBOARD_USER__", target.secrets.dashboard_user)
-    .replaceAll("__DASHBOARD_PASSWORD__", target.secrets.dashboard_password);
+    .replaceAll("__DASHBOARD_PASSWORD__", target.secrets.dashboard_password)
+    .replaceAll("__WAZUH_API_USER__", target.secrets.wazuh_api_user)
+    .replaceAll("__WAZUH_API_PASSWORD__", target.secrets.wazuh_api_password);
 }
 
 function createRuntimeFiles(generatedLabDir: string, target: WazuhTarget, script: string): string {
@@ -1099,10 +1277,10 @@ function createRuntimeFiles(generatedLabDir: string, target: WazuhTarget, script
   ensureDir(runtimeDir);
 
   const scriptPath = path.join(runtimeDir, `${target.vmName}-install.sh`);
-  fs.writeFileSync(scriptPath, script, "utf-8");
+  writeTextAtomic(scriptPath, script, 0o700);
 
   const envPath = path.join(runtimeDir, `${target.vmName}-secrets.env`);
-  fs.writeFileSync(
+  writeTextAtomic(
     envPath,
     [
       `INDEXER_ADMIN_USER=${target.secrets.indexer_admin_user}`,
@@ -1111,7 +1289,7 @@ function createRuntimeFiles(generatedLabDir: string, target: WazuhTarget, script
       `DASHBOARD_PASSWORD=${target.secrets.dashboard_password}`,
       ""
     ].join("\n"),
-    "utf-8"
+    0o600
   );
 
   return scriptPath;
@@ -1146,7 +1324,13 @@ function resolveTargets(outputsDir: string, generatedLabDir: string): WazuhTarge
       throw new Error(`[Wazuh patch] SSH config introuvable pour ${vmName} dans ssh-access.local.json`);
     }
 
-    const secrets = loadOrCreateSecrets(generatedLabDir, "wazuh-global");
+    const wazuhIp = findHostIp(host);
+
+    const secrets = loadOrCreateSecrets(
+      generatedLabDir,
+      "wazuh-global",
+      wazuhIp
+    );
 
     return { vmName, host, ssh, secrets };
   });
@@ -1155,6 +1339,8 @@ function resolveTargets(outputsDir: string, generatedLabDir: string): WazuhTarge
 export function patchLiveWazuhConfigs(outputsDir = path.join(process.cwd(), "outputs")): void {
   const generatedLabDir = resolveOutputsDir(outputsDir);
   ensureDir(generatedLabDir);
+
+  console.log(`[Wazuh patch] Mode déploiement: ${resolveDeploymentMode()}`);
 
   const targets = resolveTargets(outputsDir, generatedLabDir);
   if (targets.length === 0) return;
@@ -1190,9 +1376,10 @@ export function patchLiveWazuhConfigs(outputsDir = path.join(process.cwd(), "out
     console.log(`- IP Wazuh: ${wazuhIp}`);
     console.log(`- Dashboard: https://${wazuhIp}/`);
     console.log(`- Indexer user: ${target.secrets.indexer_admin_user}`);
-    console.log(`- Indexer password: ${target.secrets.indexer_admin_password}`);
+    console.log(`- Indexer password: [hidden]`);
     console.log(`- Dashboard user: ${target.secrets.dashboard_user}`);
-    console.log(`- Dashboard password: ${target.secrets.dashboard_password}`);
+    console.log(`- Dashboard password: [hidden]`);
+    console.log(`- Wazuh API password: [hidden]`);
     console.log(`- Secrets: ${path.join(generatedLabDir, "secrets", "wazuh-global-credentials.json")}`);
   }
 }

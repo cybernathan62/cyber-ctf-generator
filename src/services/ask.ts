@@ -1,49 +1,103 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type {
+  LabDefinition,
+  RequestedRole,
+  RoleType,
+  RoleVariant,
+  ZoneType
+} from "./type.js";
 
-type LabDefinition = {
-  name: string;
-  required_roles: string[];
-  instances: any[];
-};
+function validatePrompt(input: string): void {
+  if (input.length > 500) {
+    throw new Error("[ask] Prompt trop long.");
+  }
 
-function detectRolesFromPrompt(input: string): string[] {
+  if (/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(input)) {
+    throw new Error("[ask] Prompt contient des caractères de contrôle interdits.");
+  }
+}
+
+function hasAny(text: string, values: string[]): boolean {
+  return values.some((value) => text.includes(value));
+}
+
+function pushRole(
+  roles: RequestedRole[],
+  role: RoleType,
+  variant: RoleVariant,
+  zone: ZoneType,
+  count = 1,
+  nodeCount = 1
+): void {
+  roles.push({
+    role,
+    variant,
+    zone,
+    count,
+    node_count: nodeCount
+  });
+}
+
+function detectRolesFromPrompt(input: string): RequestedRole[] {
   const text = input.toLowerCase();
-  const roles = new Set<string>();
+  const roles: RequestedRole[] = [];
 
-  if (text.includes("firewall") || text.includes("pfsense") || text.includes("edge")) {
-    roles.add("edge_firewall_cluster");
+  if (hasAny(text, ["firewall", "pfsense", "edge", "pfsense edge"])) {
+    pushRole(roles, "edge_firewall", "simple", "edge");
   }
 
   if (text.includes("bastion")) {
-    roles.add("bastion");
+    pushRole(roles, "bastion", "simple", "management");
   }
 
-  if (text.includes("dmz") || text.includes("reverse proxy") || text.includes("proxy") || text.includes("web")) {
-    roles.add("reverse_proxy");
+  if (hasAny(text, ["dmz", "reverse proxy", "reverse_proxy", "proxy", "web"])) {
+    pushRole(roles, "reverse_proxy", "simple", "dmz");
   }
 
-  if (text.includes("db") || text.includes("database") || text.includes("base de données")) {
-    roles.add("db_server");
+  if (hasAny(text, [" db ", "database", "base de données", "base de donnees"])) {
+    pushRole(roles, "db_server", "simple", "data");
   }
 
   if (text.includes("wazuh")) {
-    roles.add("wazuh_server");
+    pushRole(roles, "internal_firewall", "simple", "soc");
+    pushRole(roles, "wazuh_server", "simple", "soc");
   }
 
   if (text.includes("zabbix")) {
-    roles.add("zabbix_server");
+    pushRole(roles, "zabbix_server", "simple", "soc");
   }
 
-  return [...roles];
+  if (hasAny(text, ["soc-ai", "soc ai", "agent ia", "ia soc", "ai soc"])) {
+    pushRole(roles, "soc_ai_agent", "simple", "soc");
+  }
+
+  return roles;
 }
 
-function main() {
+function writeJsonFile(filePath: string, data: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+  const tmpPath = `${filePath}.tmp`;
+
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), {
+    encoding: "utf-8",
+    mode: 0o600
+  });
+
+  fs.renameSync(tmpPath, filePath);
+}
+
+function main(): void {
   const userPrompt = process.argv.slice(2).join(" ").trim();
 
   if (!userPrompt) {
-    throw new Error("Aucune demande fournie. Exemple: npm run ask -- \"je veux une infra avec un bastion et un wazuh\"");
+    throw new Error(
+      'Aucune demande fournie. Exemple: npm run ask -- "je veux une infra avec un pfsense edge, un bastion et un wazuh"'
+    );
   }
+
+  validatePrompt(userPrompt);
 
   const required_roles = detectRolesFromPrompt(userPrompt);
 
@@ -51,12 +105,8 @@ function main() {
     throw new Error("Aucun rôle reconnu dans la demande.");
   }
 
-  const outputDir = path.join(process.cwd(), "outputs");
+  const outputDir = path.resolve(process.cwd(), "outputs");
   const outputFile = path.join(outputDir, "lab-definition.json");
-
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
 
   const definition: LabDefinition = {
     name: "prompt-generated-lab",
@@ -64,7 +114,7 @@ function main() {
     instances: []
   };
 
-  fs.writeFileSync(outputFile, JSON.stringify(definition, null, 2), "utf-8");
+  writeJsonFile(outputFile, definition);
 
   console.log("Lab definition généré :", outputFile);
   console.log(JSON.stringify(definition, null, 2));

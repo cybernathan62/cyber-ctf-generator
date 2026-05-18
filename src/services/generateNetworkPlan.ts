@@ -1,11 +1,16 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { LabDefinition, NetworkPlanHost } from "./type.js";
 
+function secureRandom(min: number, max: number): number {
+  return crypto.randomInt(min, max + 1);
+}
+
 function randomVlan(used: Set<number>): number {
   let vlan = 0;
   do {
-    vlan = Math.floor(Math.random() * 191) + 10;
+    vlan = secureRandom(10, 200);
   } while (used.has(vlan));
   used.add(vlan);
   return vlan;
@@ -26,7 +31,7 @@ function gateway(labId: number, vlan: number): string {
 function randomHost(usedHosts: Set<number>): number {
   let host = 0;
   do {
-    host = Math.floor(Math.random() * 231) + 10;
+    host = secureRandom(10, 240);
   } while (usedHosts.has(host));
   usedHosts.add(host);
   return host;
@@ -36,6 +41,9 @@ export function generateNetworkPlanFromDefinition(
   labDefinition: LabDefinition,
   outputDir: string
 ) {
+  if (!Array.isArray(labDefinition.required_roles)) {
+  throw new Error("[network-plan] required_roles invalide.");
+}
   const roles = labDefinition.required_roles;
 
   const edgeRole = roles.find((r) => r.role === "edge_firewall");
@@ -60,7 +68,7 @@ export function generateNetworkPlanFromDefinition(
   const dataFwNodeCount =
     dataFwRole?.variant === "ha" ? Math.max(2, dataFwRole.node_count) : dataFwRole ? 1 : 0;
 
-  const labId = Math.floor(Math.random() * 9) + 1;
+  const labId = secureRandom(1, 9);
   const usedVlans = new Set<number>();
 
   const managementVlan = randomVlan(usedVlans);
@@ -355,6 +363,26 @@ export function generateNetworkPlanFromDefinition(
       ]
     });
   }
+    const socAiRole = roles.find((r) => r.role === "soc_ai_agent");
+
+  if (socAiRole && socVlan !== null && socGw) {
+    hosts.push({
+      id: "soc-ai-1",
+      role: "soc_ai_agent",
+      variant: "simple",
+      zone: "soc",
+      profile: "debian-wazuh",
+      interfaces: [
+        {
+          name: "eth1",
+          network_id: "soc-net",
+          ip: ip(labId, socVlan, randomHost(usedSocHosts), 24),
+          gateway: socGw,
+          dns: ["1.1.1.1", "8.8.8.8"]
+        }
+      ]
+    });
+  }
 
   const dbRole = roles.find((r) => r.role === "db_server");
   const dbNodes =
@@ -399,11 +427,20 @@ export function generateNetworkPlanFromDefinition(
   };
 
   fs.mkdirSync(outputDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(outputDir, "network-plan.json"),
-    JSON.stringify(plan, null, 2),
-    "utf-8"
-  );
+
+const planPath = path.join(outputDir, "network-plan.json");
+const tmpPath = `${planPath}.tmp`;
+
+fs.writeFileSync(
+  tmpPath,
+  JSON.stringify(plan, null, 2),
+  {
+    encoding: "utf-8",
+    mode: 0o600
+  }
+);
+
+fs.renameSync(tmpPath, planPath);
 
   return plan;
 }

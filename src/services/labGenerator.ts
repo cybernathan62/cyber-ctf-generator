@@ -63,7 +63,7 @@ export class LabGeneratorService {
     const portAllocations = this.allocatePorts(instances);
     const vagrantfile = this.generateVagrantfile(instances, portAllocations);
 
-    fs.writeFileSync(path.join(outputDir, "Vagrantfile"), vagrantfile, "utf-8");
+    this.writeTextAtomic(path.join(outputDir, "Vagrantfile"), vagrantfile, 0o644);
 
     this.generateSshAccessLocalFile(outputDir, instances, portAllocations);
 
@@ -72,6 +72,19 @@ export class LabGeneratorService {
       message: "Vagrantfile + ssh-access.local.json générés",
       outputDir
     };
+  }
+
+  private writeTextAtomic(filePath: string, content: string, mode = 0o600): void {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+    const tmpPath = `${filePath}.tmp`;
+
+    fs.writeFileSync(tmpPath, content, {
+      encoding: "utf-8",
+      mode
+    });
+
+    fs.renameSync(tmpPath, filePath);
   }
 
   private getTotalNodes(requested: RequestedRole): number {
@@ -160,6 +173,9 @@ export class LabGeneratorService {
 
       case "zabbix_server":
         return totalNodes > 1 ? `zabbix-${nodeIndex}` : "zabbix-1";
+
+      case "soc_ai_agent":
+        return totalNodes > 1 ? `soc-ai-${nodeIndex}` : "soc-ai-1";
 
       case "db_server":
         return totalNodes > 1 ? `db-server-${nodeIndex}` : "db-server-1";
@@ -390,10 +406,10 @@ export class LabGeneratorService {
 
     const sshAccessPath = path.join(outputDir, "..", "ssh-access.local.json");
 
-    fs.writeFileSync(
+    this.writeTextAtomic(
       sshAccessPath,
       JSON.stringify(sshAccess, null, 2),
-      "utf-8"
+      0o600
     );
 
     console.log(`[ssh-access] Fichier généré : ${sshAccessPath}`);

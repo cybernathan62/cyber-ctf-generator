@@ -48,7 +48,12 @@ function readYamlIfExists(filePath: string): unknown {
   const raw = fs.readFileSync(filePath, "utf-8");
   if (!raw.trim()) return null;
 
-  return YAML.parse(raw);
+  try {
+    return YAML.parse(raw);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[policy] YAML invalide ${filePath}: ${message}`);
+  }
 }
 
 function loadPolicyDirectory(rootDir: string): void {
@@ -57,7 +62,11 @@ function loadPolicyDirectory(rootDir: string): void {
 
     for (const entry of fs.readdirSync(currentDir)) {
       const fullPath = path.join(currentDir, entry);
-      const stat = fs.statSync(fullPath);
+      const stat = fs.lstatSync(fullPath);
+
+      if (stat.isSymbolicLink()) {
+        continue;
+      }
 
       if (stat.isDirectory()) {
         walk(fullPath);
@@ -141,10 +150,22 @@ export function validateLabWithPolicies(
     projectRoot?: string;
   }
 ): PolicyEngineResult {
-  const projectRoot = options?.projectRoot ?? process.cwd();
-  const policiesRoot = path.join(projectRoot, "schemas", "policies");
+  const projectRoot = path.resolve(options?.projectRoot ?? process.cwd());
+  const policiesRoot = path.resolve(projectRoot, "schemas", "policies");
+
+  if (!policiesRoot.startsWith(projectRoot)) {
+    throw new Error("[policy] Chemin policies invalide.");
+  }
 
   loadPolicyDirectory(policiesRoot);
+
+  if (!Array.isArray(lab.required_roles)) {
+    throw new Error("[policy] lab.required_roles invalide.");
+  }
+
+  if (!Array.isArray(lab.instances)) {
+    throw new Error("[policy] lab.instances invalide.");
+  }
 
   const instances = lab.instances ?? [];
   const requiredRoles = lab.required_roles ?? [];

@@ -5,8 +5,9 @@ import { LabGeneratorService } from "./labGenerator.js";
 import { generateNetworkPlanFromDefinition } from "./generateNetworkPlan.js";
 import { patchLivePfSenseConfigs } from "./pfsenseLiveConfigPatcher.js";
 import { patchLiveDebianConfigs } from "./debianLiveConfigPatcher.js";
-import { patchLiveWazuhConfigs } from "./wazuhLiveConfigPatcher.js";
+import { patchLiveWazuhConfigs } from "./wazuhLiveConfigPatcher.production-mode.js";
 import { patchLiveWazuhAgents } from "./wazuhAgentLivePatcher.js";
+import { patchLiveSocAiAgent } from "./socAiLivePatcher.js";
 import { validateLabWithPolicies } from "./policyEngine.js";
 import {
   LabDefinition,
@@ -259,6 +260,20 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
   if (text.includes("zabbix")) {
     pushRole(roles, "zabbix_server", "simple", "soc", 1, 1);
   }
+    if (
+    hasAny(text, [
+      "ia",
+      "agent ia",
+      "soc ai",
+      "agent soc",
+      "agent ia soc",
+      "ia soc",
+      "ai agent",
+      "ai soc"
+    ])
+  ) {
+    pushRole(roles, "soc_ai_agent", "simple", "soc", 1, 1);
+  }
 
   if (
     hasAny(text, [
@@ -285,7 +300,7 @@ function waitSeconds(seconds: number): void {
 
   const result = spawnSync(command, args, {
     stdio: "inherit",
-    shell: true
+    shell: false
   });
 
   if (result.error) {
@@ -299,7 +314,7 @@ function vagrantExists(vmName: string, generatedLabDir: string): boolean {
   const result = spawnSync(command, ["status", vmName], {
     cwd: generatedLabDir,
     encoding: "utf-8",
-    shell: true
+    shell: false
   });
 
   return result.status === 0 && !result.stdout.includes("The machine with the name");
@@ -345,7 +360,8 @@ function waitForDebianSsh(generatedLabDir: string): void {
     "reverse-proxy-1",
     "db-server-1",
     "wazuh-1",
-    "zabbix-1"
+    "zabbix-1",
+    "soc-ai-1"
   ];
 
   for (const vmName of debianVms) {
@@ -353,14 +369,32 @@ function waitForDebianSsh(generatedLabDir: string): void {
   }
 }
 
+function writeJsonAtomic(filePath: string, data: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+  const tmpPath = `${filePath}.tmp`;
+
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), {
+    encoding: "utf-8",
+    mode: 0o600
+  });
+
+
+  fs.renameSync(tmpPath, filePath);
+}
+
 function main(): void {
   const userPrompt = process.argv.slice(2).join(" ").trim();
 
-  if (!userPrompt) {
-    throw new Error(
-      'Exemple: npm run infra -- "je veux un pfsense avec un bastion segmenter par un pfsense en ha et un cluster wazuh"'
-    );
-  }
+ if (!userPrompt) {
+  throw new Error(
+    'Exemple: npm run infra -- "je veux un pfsense avec un bastion segmenter par un pfsense en ha et un cluster wazuh"'
+  );
+}
+
+if (userPrompt.length > 500) {
+  throw new Error("[infra] Prompt trop long.");
+}
 
   const required_roles = detectRolesFromPrompt(userPrompt);
 
@@ -368,7 +402,7 @@ function main(): void {
     throw new Error("Aucun rôle reconnu.");
   }
 
-  const outputRoot = path.join(process.cwd(), "outputs");
+  const outputRoot = path.resolve(process.cwd(), "outputs");
   const definitionFile = path.join(outputRoot, "lab-definition.json");
   const policyValidationFile = path.join(outputRoot, "policy-validation.json");
   const networkPlanFile = path.join(outputRoot, "network-plan.json");
@@ -385,7 +419,7 @@ function main(): void {
     instances: []
   };
 
-  fs.writeFileSync(definitionFile, JSON.stringify(definition, null, 2), "utf-8");
+  writeJsonAtomic(definitionFile, definition);
 
   console.log("Demande du prof :", userPrompt);
   console.log("Lab definition généré :", definitionFile);
@@ -395,11 +429,8 @@ function main(): void {
     projectRoot: process.cwd()
   });
 
-  fs.writeFileSync(
-    policyValidationFile,
-    JSON.stringify(policyResult, null, 2),
-    "utf-8"
-  );
+  writeJsonAtomic(policyValidationFile, policyResult);
+
 
   if (!policyResult.allowed) {
     console.error("\n[Policy Engine] Lab refusé :");
@@ -439,7 +470,8 @@ function main(): void {
   const upResult = spawnSync(command, ["up"], {
     cwd: generatedLabDir,
     stdio: "inherit",
-    shell: true
+    shell: false,
+    timeout: 30 * 60 * 1000
   });
 
   if (upResult.error) {
@@ -480,6 +512,25 @@ function main(): void {
 
   patchLiveWazuhAgents(outputRoot);
 
+  waitSeconds(10);
+
+  if (vagrantExists("soc-ai-1", generatedLabDir)) {
+    waitForVmSsh("soc-ai-1", generatedLabDir, 300);
+
+    try {
+      patchLiveSocAiAgent(outputRoot);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (message.includes("soc-ai-1 introuvable")) {
+        console.log("[infra] Aucun SOC-AI dans cette infra, skip.");
+      } else {
+        throw error;
+      }
+    }
+  } else {
+    console.log("[infra] Aucun SOC-AI déployé, skip.");
+  }
   console.log("\nInfra complète déployée : pfSense + Debian + Wazuh + agents Wazuh.");
 }
 
