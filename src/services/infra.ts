@@ -3,11 +3,13 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { LabGeneratorService } from "./labGenerator.js";
 import { generateNetworkPlanFromDefinition } from "./generateNetworkPlan.js";
+import { generatePfSenseMinimalPlan } from "./generatePfsenseMinimalPlan.js";
 import { patchLivePfSenseConfigs } from "./pfsenseLiveConfigPatcher.js";
 import { patchLiveDebianConfigs } from "./debianLiveConfigPatcher.js";
 import { patchLiveWazuhConfigs } from "./wazuhLiveConfigPatcher.production-mode.js";
 import { patchLiveWazuhAgents } from "./wazuhAgentLivePatcher.js";
 import { patchLiveSocAiAgent } from "./socAiLivePatcher.js";
+import { patchLiveSuricataSensor } from "./suricataLivePatcher.js";
 import { validateLabWithPolicies } from "./policyEngine.js";
 import {
   LabDefinition,
@@ -64,226 +66,149 @@ function hasAny(text: string, values: string[]): boolean {
   return values.some((value) => text.includes(value));
 }
 
+function roleExists(
+  roles: RequestedRole[],
+  role: RoleType,
+  zone: ZoneType
+): boolean {
+  return roles.some((item) => item.role === role && item.zone === zone);
+}
+
+function pushRoleOnce(
+  roles: RequestedRole[],
+  role: RoleType,
+  variant: RoleVariant,
+  zone: ZoneType,
+  count = 1,
+  nodeCount = 1
+): void {
+  if (roleExists(roles, role, zone)) return;
+  pushRole(roles, role, variant, zone, count, nodeCount);
+}
+
 function detectRolesFromPrompt(input: string): RequestedRole[] {
   const text = input.toLowerCase();
   const roles: RequestedRole[] = [];
 
   const wantsEdge = hasAny(text, [
-    "pfsense",
-    "firewall",
+    "pfsense edge",
     "firewall edge",
     "edge firewall",
     "firewall en entree",
     "firewall d'entree",
     "firewall en bordure",
-    "pfsense edge",
     "edge"
   ]);
 
-  const pfsenseCount = parseCount(text, "pfsense", "firewall");
+  const wantsAnyFirewall = hasAny(text, ["pfsense", "firewall"]);
 
-  const mentionsInternalPfSense =
-    text.includes("pfsense interne") ||
-    text.includes("pfsense en interne") ||
-    text.includes("firewall interne") ||
-    text.includes("interne pour une supervision") ||
-    text.includes("segmenter par un pfsense");
-
-  const wantsEdgeCluster =
-    !mentionsInternalPfSense &&
-    (
-      hasAny(text, [
-        "cluster pfsense",
-        "pfsense cluster",
-        "cluster firewall",
-        "firewall cluster",
-        "cluster de pfsense",
-        "cluster de firewall"
-      ]) ||
-      pfsenseCount >= 3
-    );
-
-  const wantsEdgeHa =
-    !mentionsInternalPfSense &&
-    !wantsEdgeCluster &&
-    hasAny(text, [
-      "deux pfsense en ha",
-      "2 pfsense en ha",
-      "pfsense edge ha",
-      "edge ha",
-      "firewall edge ha",
-      "firewall en entree ha",
-      "firewall d'entree ha",
-      "pfsense redondant",
-      "pfsense redondants"
-    ]);
-
-  if (wantsEdge) {
-    pushRole(
-      roles,
-      "edge_firewall",
-      wantsEdgeCluster ? "cluster" : wantsEdgeHa ? "ha" : "simple",
-      "edge",
-      1,
-      wantsEdgeCluster ? pfsenseCount : wantsEdgeHa ? 2 : 1
-    );
+  if (wantsEdge || wantsAnyFirewall) {
+    pushRoleOnce(roles, "edge_firewall", "simple", "edge", 1, 1);
   }
 
-  const wantsInternalSoc = hasAny(text, [
+  const hasSocService = hasAny(text, [
+    "soc",
+    "wazuh",
+    "zabbix",
+    "supervision",
+    "suricata",
+    "ids",
+    "soc ai",
+    "agent ia",
+    "ia soc"
+  ]);
+
+  const hasDataService = hasAny(text, [
+    " db ",
+    "database",
+    "base de données",
+    "base de donnees",
+    " une db",
+    " un db"
+  ]);
+
+  const hasAdService = hasAny(text, [
+    "active directory",
+    "windows server",
+    "ad server"
+  ]);
+
+  const wantsSocFirewall = hasAny(text, [
+    "pfsense interne soc",
     "firewall interne soc",
     "firewall soc",
-    "interne soc",
-    "pfsense interne",
-    "pfsense en interne",
-    "segmenter par un pfsense",
-    "firewall supervision",
-    "firewall wazuh",
-    "firewall zabbix",
-    "supervision",
-    "wazuh"
+    "pfsense soc",
+    "pfsense interne avec wazuh",
+    "pfsense interne avec suricata",
+    "pfsense interne avec supervision"
   ]);
 
-  const wantsInternalSocHa = hasAny(text, [
-    "pfsense en ha",
-    "pfsense interne ha",
-    "firewall interne soc ha",
-    "firewall soc ha",
-    "interne soc ha",
-    "firewall supervision ha"
-  ]);
-
-  if (wantsInternalSoc) {
-    pushRole(
-      roles,
-      "internal_firewall",
-      wantsInternalSocHa ? "ha" : "simple",
-      "soc",
-      1,
-      wantsInternalSocHa ? 2 : 1
-    );
-  }
-
-  const wantsInternalData = hasAny(text, [
+  const wantsDataFirewall = hasAny(text, [
+    "pfsense data",
+    "pfsense db",
+    "pfsense interne data",
+    "pfsense interne db",
     "firewall data",
     "firewall db",
     "firewall database",
-    "firewall base de données",
-    "firewall base de donnees"
+    "pfsense interne avec une db",
+    "pfsense interne avec un db",
+    "pfsense interne avec database",
+    "pfsense interne avec une base",
+    "pfsense interne avec une base de donnees",
+    "pfsense interne avec une base de données"
   ]);
 
-  const wantsInternalDataHa = hasAny(text, [
-    "firewall data ha",
-    "firewall db ha",
-    "firewall database ha",
-    "firewall base de données ha",
-    "firewall base de donnees ha"
+  const wantsAdFirewall = hasAny(text, [
+    "pfsense ad",
+    "firewall ad",
+    "firewall interne ad",
+    "pfsense interne avec ad",
+    "pfsense interne avec active directory"
   ]);
 
-  if (wantsInternalData) {
-    pushRole(
-      roles,
-      "internal_firewall",
-      wantsInternalDataHa ? "ha" : "simple",
-      "data",
-      1,
-      wantsInternalDataHa ? 2 : 1
-    );
+  if (hasSocService && wantsSocFirewall) {
+    pushRoleOnce(roles, "internal_firewall", "simple", "soc", 1, 1);
+  }
+
+  if (hasDataService && wantsDataFirewall) {
+    pushRoleOnce(roles, "internal_firewall", "simple", "data", 1, 1);
+  }
+
+  if (hasAdService && wantsAdFirewall) {
+    pushRoleOnce(roles, "internal_firewall", "simple", "ad", 1, 1);
   }
 
   if (text.includes("bastion")) {
-    pushRole(roles, "bastion", "simple", "management", 1, 1);
+    pushRoleOnce(roles, "bastion", "simple", "management", 1, 1);
   }
 
   if (hasAny(text, ["dmz", "reverse proxy", "reverse_proxy", "proxy", "web"])) {
-    pushRole(roles, "reverse_proxy", "simple", "dmz", 1, 1);
+    pushRoleOnce(roles, "reverse_proxy", "simple", "dmz", 1, 1);
   }
 
-  const wantsDb =
-    hasAny(text, [" db ", "database", "base de données", "base de donnees"]) ||
-    text.startsWith("db ") ||
-    text.endsWith(" db") ||
-    text.includes(" un db") ||
-    text.includes(" une db");
-
-  if (wantsDb) {
-    const wantsDbCluster = hasAny(text, [
-      "db cluster",
-      "database cluster",
-      "cluster db",
-      "cluster database",
-      "base de données cluster",
-      "base de donnees cluster",
-      "cluster base de données",
-      "cluster base de donnees"
-    ]);
-
-    const nodeCount = wantsDbCluster
-      ? Math.max(
-          2,
-          parseCount(text, "db", "database", "noeud", "nœud", "node", "nodes")
-        )
-      : 1;
-
-    pushRole(
-      roles,
-      "db_server",
-      wantsDbCluster ? "cluster" : "simple",
-      "data",
-      1,
-      nodeCount
-    );
+  if (hasDataService) {
+    pushRoleOnce(roles, "db_server", "simple", "data", 1, 1);
   }
 
   if (text.includes("wazuh") || text.includes("supervision")) {
-    const wantsWazuhCluster =
-      text.includes("wazuh cluster") ||
-      text.includes("cluster wazuh") ||
-      text.includes("cluster de wazuh");
-
-    const nodeCount = wantsWazuhCluster
-      ? Math.max(
-          3,
-          parseCount(text, "wazuh", "noeud", "nœud", "node", "nodes")
-        )
-      : 1;
-
-    pushRole(
-      roles,
-      "wazuh_server",
-      wantsWazuhCluster ? "cluster" : "simple",
-      "soc",
-      1,
-      nodeCount
-    );
+    pushRoleOnce(roles, "wazuh_server", "simple", "soc", 1, 1);
   }
 
   if (text.includes("zabbix")) {
-    pushRole(roles, "zabbix_server", "simple", "soc", 1, 1);
-  }
-    if (
-    hasAny(text, [
-      "ia",
-      "agent ia",
-      "soc ai",
-      "agent soc",
-      "agent ia soc",
-      "ia soc",
-      "ai agent",
-      "ai soc"
-    ])
-  ) {
-    pushRole(roles, "soc_ai_agent", "simple", "soc", 1, 1);
+    pushRoleOnce(roles, "zabbix_server", "simple", "soc", 1, 1);
   }
 
-  if (
-    hasAny(text, [
-      "windows server",
-      "windows servers",
-      "active directory",
-      "ad server"
-    ])
-  ) {
-    pushRole(roles, "windows_server", "simple", "ad", 1, 1);
+  if (hasAny(text, ["soc ai", "agent ia", "ia soc", "ai soc", "agent soc"])) {
+    pushRoleOnce(roles, "soc_ai_agent", "simple", "soc", 1, 1);
+  }
+
+  if (hasAny(text, ["suricata", "ids", "ids sensor", "sonde ids", "sonde suricata", "nids"])) {
+    pushRoleOnce(roles, "ids_sensor", "simple", "soc", 1, 1);
+  }
+
+  if (hasAdService) {
+    pushRoleOnce(roles, "windows_server", "simple", "ad", 1, 1);
   }
 
   return roles;
@@ -361,11 +286,12 @@ function waitForDebianSsh(generatedLabDir: string): void {
     "db-server-1",
     "wazuh-1",
     "zabbix-1",
-    "soc-ai-1"
+    "soc-ai-1",
+    "ids-sensor-1-1"
   ];
 
   for (const vmName of debianVms) {
-    waitForVmSsh(vmName, generatedLabDir, 300);
+    waitForVmSsh(vmName, generatedLabDir, 900);
   }
 }
 
@@ -379,22 +305,21 @@ function writeJsonAtomic(filePath: string, data: unknown): void {
     mode: 0o600
   });
 
-
   fs.renameSync(tmpPath, filePath);
 }
 
 function main(): void {
   const userPrompt = process.argv.slice(2).join(" ").trim();
 
- if (!userPrompt) {
-  throw new Error(
-    'Exemple: npm run infra -- "je veux un pfsense avec un bastion segmenter par un pfsense en ha et un cluster wazuh"'
-  );
-}
+  if (!userPrompt) {
+    throw new Error(
+      'Exemple: npm run infra -- "je veux un pfsense avec un bastion segmenter par un pfsense en ha, un cluster wazuh et une sonde suricata"'
+    );
+  }
 
-if (userPrompt.length > 500) {
-  throw new Error("[infra] Prompt trop long.");
-}
+  if (userPrompt.length > 500) {
+    throw new Error("[infra] Prompt trop long.");
+  }
 
   const required_roles = detectRolesFromPrompt(userPrompt);
 
@@ -406,8 +331,9 @@ if (userPrompt.length > 500) {
   const definitionFile = path.join(outputRoot, "lab-definition.json");
   const policyValidationFile = path.join(outputRoot, "policy-validation.json");
   const networkPlanFile = path.join(outputRoot, "network-plan.json");
-  const generatedLabDir = path.join(outputRoot, "generated-lab");
 
+  const generatedLabDir = path.join(outputRoot, "generated-lab");
+  const pfSensePlanFile = path.join(outputRoot, "pfsense-plan.json");
   const patchedPfSenseDir = path.join(outputRoot, "pfsense-live-patched");
   const patchedDebianDir = path.join(outputRoot, "debian-live-patched");
 
@@ -431,7 +357,6 @@ if (userPrompt.length > 500) {
 
   writeJsonAtomic(policyValidationFile, policyResult);
 
-
   if (!policyResult.allowed) {
     console.error("\n[Policy Engine] Lab refusé :");
     console.error(JSON.stringify(policyResult.violations, null, 2));
@@ -452,7 +377,15 @@ if (userPrompt.length > 500) {
   }
 
   console.log("Network plan généré :", networkPlanFile);
+  
+  generatePfSenseMinimalPlan(networkPlanFile, pfSensePlanFile);
 
+  if (!fs.existsSync(pfSensePlanFile)) {
+  throw new Error(`[infra] pfsense-plan.json non généré: ${pfSensePlanFile}`);
+  }
+  
+  console.log("pfSense minimal plan généré :", pfSensePlanFile);
+  
   const generator = new LabGeneratorService();
 
   const result = generator.generateLab({
@@ -471,7 +404,7 @@ if (userPrompt.length > 500) {
     cwd: generatedLabDir,
     stdio: "inherit",
     shell: false,
-    timeout: 30 * 60 * 1000
+    timeout: 60 * 60 * 1000
   });
 
   if (upResult.error) {
@@ -487,6 +420,7 @@ if (userPrompt.length > 500) {
   patchLivePfSenseConfigs(
     generatedLabDir,
     networkPlanFile,
+    pfSensePlanFile,
     patchedPfSenseDir
   );
 
@@ -502,7 +436,7 @@ if (userPrompt.length > 500) {
 
   waitSeconds(30);
 
-  waitForVmSsh("wazuh-1", generatedLabDir, 300);
+  waitForVmSsh("wazuh-1", generatedLabDir, 900);
 
   patchLiveWazuhConfigs(outputRoot);
 
@@ -515,7 +449,7 @@ if (userPrompt.length > 500) {
   waitSeconds(10);
 
   if (vagrantExists("soc-ai-1", generatedLabDir)) {
-    waitForVmSsh("soc-ai-1", generatedLabDir, 300);
+    waitForVmSsh("soc-ai-1", generatedLabDir, 900);
 
     try {
       patchLiveSocAiAgent(outputRoot);
@@ -531,7 +465,15 @@ if (userPrompt.length > 500) {
   } else {
     console.log("[infra] Aucun SOC-AI déployé, skip.");
   }
-  console.log("\nInfra complète déployée : pfSense + Debian + Wazuh + agents Wazuh.");
+
+  if (vagrantExists("ids-sensor-1-1", generatedLabDir)) {
+  waitForVmSsh("ids-sensor-1-1", generatedLabDir, 900);
+  patchLiveSuricataSensor(outputRoot);
+} else {
+  console.log("[infra] Aucun IDS Suricata déployé, skip.");
+}
+
+  console.log("\nInfra complète déployée : pfSense + Debian + Wazuh + agents Wazuh + SOC AI/IDS si demandés.");
 }
 
 main();

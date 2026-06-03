@@ -42,8 +42,9 @@ export function generateNetworkPlanFromDefinition(
   outputDir: string
 ) {
   if (!Array.isArray(labDefinition.required_roles)) {
-  throw new Error("[network-plan] required_roles invalide.");
-}
+    throw new Error("[network-plan] required_roles invalide.");
+  }
+
   const roles = labDefinition.required_roles;
 
   const edgeRole = roles.find((r) => r.role === "edge_firewall");
@@ -57,10 +58,16 @@ export function generateNetworkPlanFromDefinition(
   const wantsEdgeHa = edgeRole?.variant === "ha" && edgeRole.node_count >= 2;
   const edgeNodeCount = wantsEdgeHa ? 2 : 1;
 
+  const wantsEdge = Boolean(edgeRole);
+  const wantsIdsSensor = roles.some((r) => r.role === "ids_sensor");
   const wantsSoc = Boolean(socFwRole) || roles.some((r) => r.zone === "soc");
   const wantsData = Boolean(dataFwRole) || roles.some((r) => r.zone === "data");
   const wantsDmz = roles.some((r) => r.role === "reverse_proxy");
   const wantsBastion = roles.some((r) => r.role === "bastion");
+
+  if (!wantsEdge) {
+    throw new Error("[network-plan] edge_firewall requis pour générer le plan réseau.");
+  }
 
   const socFwNodeCount =
     socFwRole?.variant === "ha" ? Math.max(2, socFwRole.node_count) : socFwRole ? 1 : 0;
@@ -77,6 +84,7 @@ export function generateNetworkPlanFromDefinition(
   const dataVlan = wantsData ? randomVlan(usedVlans) : null;
   const transitSocVlan = socFwNodeCount > 0 ? randomVlan(usedVlans) : null;
   const transitDataVlan = dataFwNodeCount > 0 ? randomVlan(usedVlans) : null;
+  const monitorVlan = wantsIdsSensor ? 99 : null;
 
   const mgmtGw = gateway(labId, managementVlan);
   const dmzGw = dmzVlan !== null ? gateway(labId, dmzVlan) : null;
@@ -142,6 +150,16 @@ export function generateNetworkPlanFromDefinition(
       vlan_id: transitDataVlan,
       cidr: cidr(labId, transitDataVlan, transitDataPrefix),
       gateway: gateway(labId, transitDataVlan),
+      zone_type: "transit"
+    });
+  }
+
+  if (monitorVlan !== null) {
+    zoneDefinitions.push({
+      network_id: "monitor-net",
+      vlan_id: monitorVlan,
+      cidr: "10.99.0.0/24",
+      gateway: "10.99.0.1",
       zone_type: "transit"
     });
   }
@@ -337,7 +355,17 @@ export function generateNetworkPlanFromDefinition(
             ip: ip(labId, socVlan, randomHost(usedSocHosts), 24),
             gateway: socGw,
             dns: ["1.1.1.1", "8.8.8.8"]
-          }
+          },
+          ...(monitorVlan !== null
+            ? [
+                {
+                  name: "monitor",
+                  network_id: "monitor-net",
+                  ip: `10.99.0.${10 + i}/24`,
+                  gateway: null
+                }
+              ]
+            : [])
         ]
       });
     }
@@ -363,7 +391,8 @@ export function generateNetworkPlanFromDefinition(
       ]
     });
   }
-    const socAiRole = roles.find((r) => r.role === "soc_ai_agent");
+
+  const socAiRole = roles.find((r) => r.role === "soc_ai_agent");
 
   if (socAiRole && socVlan !== null && socGw) {
     hosts.push({
@@ -379,6 +408,41 @@ export function generateNetworkPlanFromDefinition(
           ip: ip(labId, socVlan, randomHost(usedSocHosts), 24),
           gateway: socGw,
           dns: ["1.1.1.1", "8.8.8.8"]
+        },
+        ...(monitorVlan !== null
+          ? [
+              {
+                name: "monitor",
+                network_id: "monitor-net",
+                ip: "10.99.0.20/24",
+                gateway: null
+              }
+            ]
+          : [])
+      ]
+    });
+  }
+
+  if (wantsIdsSensor && socVlan !== null && socGw) {
+    hosts.push({
+      id: "ids-sensor-1-1",
+      role: "ids_sensor",
+      variant: "simple",
+      zone: "soc",
+      profile: "debian-wazuh",
+      interfaces: [
+        {
+          name: "eth1",
+          network_id: "soc-net",
+          ip: ip(labId, socVlan, randomHost(usedSocHosts), 24),
+          gateway: socGw,
+          dns: ["1.1.1.1", "8.8.8.8"]
+        },
+        {
+          name: "monitor",
+          network_id: "monitor-net",
+          ip: "10.99.0.100/24",
+          gateway: null
         }
       ]
     });
@@ -428,19 +492,15 @@ export function generateNetworkPlanFromDefinition(
 
   fs.mkdirSync(outputDir, { recursive: true });
 
-const planPath = path.join(outputDir, "network-plan.json");
-const tmpPath = `${planPath}.tmp`;
+  const planPath = path.join(outputDir, "network-plan.json");
+  const tmpPath = `${planPath}.tmp`;
 
-fs.writeFileSync(
-  tmpPath,
-  JSON.stringify(plan, null, 2),
-  {
+  fs.writeFileSync(tmpPath, JSON.stringify(plan, null, 2), {
     encoding: "utf-8",
     mode: 0o600
-  }
-);
+  });
 
-fs.renameSync(tmpPath, planPath);
+  fs.renameSync(tmpPath, planPath);
 
   return plan;
 }

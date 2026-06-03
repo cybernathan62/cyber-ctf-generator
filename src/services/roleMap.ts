@@ -45,6 +45,12 @@ export const ROLE_MAP: Record<
     default_zone: "soc",
     default_variant: "simple"
   },
+  ids_sensor: {
+    naming: "suricata",
+    profile: "debian-wazuh",
+    default_zone: "soc",
+    default_variant: "simple"
+  },
   zabbix_server: {
     naming: "zabbix",
     profile: "debian-wazuh",

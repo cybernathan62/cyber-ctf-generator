@@ -176,6 +176,9 @@ export class LabGeneratorService {
 
       case "soc_ai_agent":
         return totalNodes > 1 ? `soc-ai-${nodeIndex}` : "soc-ai-1";
+      
+      case "ids_sensor":
+        return totalNodes > 1 ? `ids-sensor-${nodeIndex}` : "ids-sensor-1-1";
 
       case "db_server":
         return totalNodes > 1 ? `db-server-${nodeIndex}` : "db-server-1";

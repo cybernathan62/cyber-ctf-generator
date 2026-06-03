@@ -335,6 +335,38 @@ export function validateLabWithPolicies(
     });
   }
 
+  const hasDataFirewall =
+  requestedInternalFirewalls.some((fw) => fw.zone === "data") ||
+  internalFirewallInstances.some((fw) => fw.zone === "data");
+
+if (hasRole(lab, "db_server") && !hasDataFirewall) {
+  pushError(
+    violations,
+    "DATA_FIREWALL_REQUIRED",
+    "Un db_server nécessite un internal_firewall en zone data."
+  );
+}
+
+  const hasSocFirewall =
+  requestedInternalFirewalls.some((fw) => fw.zone === "soc") ||
+  internalFirewallInstances.some((fw) => fw.zone === "soc");
+
+if (
+  (
+    hasRole(lab, "wazuh_server") ||
+    hasRole(lab, "zabbix_server") ||
+    hasRole(lab, "soc_ai_agent") ||
+    hasRole(lab, "ids_sensor")
+  ) &&
+  !hasSocFirewall
+) {
+  pushError(
+    violations,
+    "SOC_FIREWALL_REQUIRED",
+    "Les services SOC nécessitent un internal_firewall en zone soc."
+  );
+}
+
   return {
     allowed: violations.length === 0,
     violations,

@@ -10,6 +10,15 @@ type SshConfig = {
   identityFile: string;
 };
 
+type InternalInterface = {
+  name: string;
+  network_id: string;
+  ip?: string;
+  gateway?: string | null;
+  dns?: string[];
+  mode?: "dhcp";
+};
+
 function sleepSeconds(seconds: number): void {
   if (process.platform === "win32") {
     spawnSync("powershell.exe", ["-NoProfile", "-Command", `Start-Sleep -Seconds ${seconds}`], {
@@ -24,6 +33,7 @@ function sleepSeconds(seconds: number): void {
     shell: false
   });
 }
+
 function run(command: string, args: string[], cwd: string, label: string, allowFailure = false): string {
   console.log(`\n[Debian patch] ${label}`);
   console.log(`${command} ${args.join(" ")}`);
@@ -71,7 +81,6 @@ function run(command: string, args: string[], cwd: string, label: string, allowF
 
 function getVagrantSshConfig(generatedLabDir: string, vmName: string): SshConfig {
   const command = process.platform === "win32" ? "vagrant.exe" : "vagrant";
-
   const raw = run(command, ["ssh-config", vmName], generatedLabDir, `Lecture ssh-config ${vmName}`);
 
   const get = (key: string): string => {
@@ -93,9 +102,7 @@ function sshSecurityOptions(): string[] {
   const mode = process.env.SSH_TRUST_MODE ?? "lab";
 
   if (mode === "production") {
-    return [
-      "-o", "StrictHostKeyChecking=yes"
-    ];
+    return ["-o", "StrictHostKeyChecking=yes"];
   }
 
   return [
@@ -169,10 +176,25 @@ function assertIpv4(value: string, label: string): void {
   }
 }
 
-function findPrimaryInternalInterface(host: NetworkPlanHost): any {
-  const iface = host.interfaces.find((i: any) => i.name !== "wan" && i.ip);
-  if (!iface) throw new Error(`Aucune interface interne avec IP trouvée pour ${host.id}`);
-  return iface;
+function getInternalInterfaces(host: NetworkPlanHost): InternalInterface[] {
+  return host.interfaces.filter((iface: any) => {
+    return iface.name !== "wan" && iface.ip && iface.mode !== "dhcp";
+  }) as InternalInterface[];
+}
+
+function findPrimaryInternalInterface(host: NetworkPlanHost): InternalInterface {
+  const interfaces = getInternalInterfaces(host);
+
+  const primary =
+    interfaces.find((i) => i.network_id !== "monitor-net" && i.gateway) ??
+    interfaces.find((i) => i.network_id !== "monitor-net") ??
+    interfaces[0];
+
+  if (!primary) {
+    throw new Error(`Aucune interface interne avec IP trouvée pour ${host.id}`);
+  }
+
+  return primary;
 }
 
 function findGatewayForHost(host: NetworkPlanHost): string {
@@ -180,24 +202,82 @@ function findGatewayForHost(host: NetworkPlanHost): string {
 
   if (iface.gateway) return iface.gateway;
 
-  const ip = ipOnly(iface.ip);
+  const ip = ipOnly(iface.ip as string);
   const [a, b, c] = ip.split(".");
   return `${a}.${b}.${c}.1`;
 }
 
-function generateInterfacesFile(host: NetworkPlanHost): string {
-  const iface = findPrimaryInternalInterface(host);
+function linuxInterfaceName(index: number): string {
+  return `enp0s${8 + index}`;
+}
+
+function generateStaticInterfaceBlock(
+  linuxName: string,
+  iface: InternalInterface,
+  includeDefaultGateway: boolean,
+  defaultGateway: string
+): string {
+  if (!iface.ip) {
+    throw new Error(`[Debian patch] IP absente pour interface ${iface.network_id}`);
+  }
+
   const address = ipOnly(iface.ip);
   const netmask = cidrToNetmask(cidrOnly(iface.ip));
+
+  assertIpv4(address, `${iface.network_id}.address`);
+
+  const lines = [
+    `auto ${linuxName}`,
+    `iface ${linuxName} inet static`,
+    `    address ${address}`,
+    `    netmask ${netmask}`
+  ];
+
+  if (includeDefaultGateway) {
+    assertIpv4(defaultGateway, `${iface.network_id}.gateway`);
+
+    lines.push(`    gateway ${defaultGateway}`);
+    lines.push(`    dns-nameservers ${defaultGateway} 8.8.8.8 1.1.1.1`);
+    lines.push(`    post-up ip route del default dev enp0s3 || true`);
+    lines.push(`    post-up ip route del default via 10.0.2.2 dev enp0s3 || true`);
+    lines.push(`    post-up ip route replace default via ${defaultGateway} dev ${linuxName} || true`);
+    lines.push(
+      `    post-up /bin/sh -c 'printf "nameserver ${defaultGateway}\\nnameserver 8.8.8.8\\nnameserver 1.1.1.1\\n" > /etc/resolv.conf'`
+    );
+  } else {
+    lines.push(`    post-up ip link set ${linuxName} up || true`);
+  }
+
+  return lines.join("\n");
+}
+
+function generateInterfacesFile(host: NetworkPlanHost): string {
+  const interfaces = getInternalInterfaces(host);
+  const primary = findPrimaryInternalInterface(host);
   const gateway = findGatewayForHost(host);
 
-    assertIpv4(address, `${host.id}.address`);
-    assertIpv4(gateway, `${host.id}.gateway`);
+  const blocks: string[] = [];
+
+  interfaces.forEach((iface, index) => {
+    const linuxName = linuxInterfaceName(index);
+    const isPrimary = iface === primary;
+    const isMonitor = iface.network_id === "monitor-net";
+
+    blocks.push(
+      generateStaticInterfaceBlock(
+        linuxName,
+        iface,
+        isPrimary && !isMonitor,
+        gateway
+      )
+    );
+  });
 
   return `# Generated by Cyber CTF Generator
 # ${host.id}
 # enp0s3 = NAT Vagrant DHCP pour SSH/provisioning uniquement
-# enp0s8 = réseau interne lab avec gateway + DNS pfSense
+# enp0s8+ = interfaces internes lab selon network-plan.json
+# gateway uniquement sur l'interface primaire, jamais sur monitor-net
 
 auto lo
 iface lo inet loopback
@@ -207,16 +287,7 @@ iface enp0s3 inet dhcp
     post-up ip route del default dev enp0s3 || true
     post-up ip route del default via 10.0.2.2 dev enp0s3 || true
 
-auto enp0s8
-iface enp0s8 inet static
-    address ${address}
-    netmask ${netmask}
-    gateway ${gateway}
-    dns-nameservers ${gateway} 8.8.8.8 1.1.1.1
-    post-up ip route del default dev enp0s3 || true
-    post-up ip route del default via 10.0.2.2 dev enp0s3 || true
-    post-up ip route replace default via ${gateway} dev enp0s8 || true
-    post-up /bin/sh -c 'printf "nameserver ${gateway}\\nnameserver 8.8.8.8\\nnameserver 1.1.1.1\\n" > /etc/resolv.conf'
+${blocks.join("\n\n")}
 `;
 }
 
@@ -248,7 +319,12 @@ export function patchLiveDebianConfigs(
 
     fs.writeFileSync(interfacesPath, interfacesContent, "utf-8");
 
-    run(scpCommand, scpArgs(cfg, interfacesPath, "/tmp/interfaces"), generatedLabDir, `Upload /etc/network/interfaces ${vmName}`);
+    run(
+      scpCommand,
+      scpArgs(cfg, interfacesPath, "/tmp/interfaces"),
+      generatedLabDir,
+      `Upload /etc/network/interfaces ${vmName}`
+    );
 
     run(
       sshCommand,
@@ -260,21 +336,37 @@ export function patchLiveDebianConfigs(
       `Application /etc/network/interfaces ${vmName}`
     );
 
+    const runtimeInterfaceCommands = getInternalInterfaces(host).flatMap((iface, index) => {
+  const linuxName = linuxInterfaceName(index);
+
+  if (!iface.ip) return [];
+
+  return [
+    `sudo ip link set ${linuxName} up || true`,
+    `sudo ip addr replace ${iface.ip} dev ${linuxName} || true`
+  ];
+});
+
     run(
       sshCommand,
       sshArgs(
         cfg,
         [
           "sudo ip link set enp0s8 up || true",
+          "sudo ip link set enp0s9 up || true",
           "sleep 2",
           "sudo ifdown enp0s8 >/dev/null 2>&1 || true",
+          "sudo ifdown enp0s9 >/dev/null 2>&1 || true",
           "sudo ifup enp0s8 >/dev/null 2>&1 || true",
+          "sudo ifup enp0s9 >/dev/null 2>&1 || true",
+          ...runtimeInterfaceCommands,
           "sudo ip route del default via 10.0.2.2 dev enp0s3 >/dev/null 2>&1 || true",
           "sudo ip route del default dev enp0s3 >/dev/null 2>&1 || true",
           `sudo ip route replace default via ${gateway} dev enp0s8 || true`,
           "sudo rm -f /etc/resolv.conf",
           `sudo /bin/sh -c 'printf "nameserver ${gateway}\\nnameserver 8.8.8.8\\nnameserver 1.1.1.1\\n" > /etc/resolv.conf'`,
           "ip addr show enp0s8",
+          "ip addr show enp0s9 || true",
           "ip route",
           "ip route get 8.8.8.8 || true",
           "cat /etc/resolv.conf",
@@ -283,7 +375,7 @@ export function patchLiveDebianConfigs(
         ].join("; ")
       ),
       generatedLabDir,
-      `Activation gateway + DNS ${vmName}`,
+      `Activation interfaces + gateway + DNS ${vmName}`,
       true
     );
   }

@@ -1,213 +1,94 @@
-CTF Lab Generator — Wazuh / SOC-AI Infrastructure
-Overview
+# AI-Powered Enterprise Infrastructure Generator
 
-This project generates fully automated cybersecurity lab environments using:
+## Overview
 
-pfSense
-Wazuh
-Zabbix
-SOC-AI agents
-Vagrant
-VirtualBox
-TypeScript automation
+AI-Powered Enterprise Infrastructure Generator is a platform designed to automatically build, deploy, monitor and secure realistic enterprise environments from a simple natural language request.
 
-The objective is to transform a natural-language request into:
+The project combines Infrastructure as Code, Cybersecurity, Virtualization and Artificial Intelligence to demonstrate how AI can assist administrators, SOC analysts and security teams throughout the entire infrastructure lifecycle.
 
-a complete network plan,
-infrastructure definitions,
-VM provisioning,
-security configuration,
-monitoring integration,
-Wazuh agent onboarding,
-SOC-AI deployment.
+## Vision
 
-Example:
+Transform a simple request such as:
 
-npm run infra -- "je veux une infra avec un pfsense edge, un wazuh, un zabbix et un soc-ai"
-Features
-Infrastructure generation
+> "Deploy an enterprise with a pfSense firewall, DMZ, Bastion, Active Directory and Wazuh SOC."
 
-The generator automatically creates:
+into a fully operational virtualized infrastructure.
 
-Vagrantfile
-Network topology
-VLAN/IP plan
-Security policies
-Firewall structure
-Monitoring integration
-Wazuh enrollment
-Runtime secrets
-Supported services
-Edge security
-pfSense edge firewall
-NAT
-segmentation
-DMZ support
-internal routing
-Monitoring
-Wazuh Manager
-Wazuh Indexer
-Wazuh Dashboard
-Wazuh Agents
-Zabbix
-SOC-AI
+The long-term objective is to evolve from infrastructure generation toward an autonomous AI-assisted cyber defense platform capable of:
 
-SOC-AI nodes can:
+- Designing infrastructures
+- Deploying environments
+- Detecting attacks
+- Identifying vulnerabilities
+- Assisting incident response
+- Improving security posture
 
-authenticate against Wazuh API
-retrieve agents
-retrieve alerts
-monitor infrastructure state
-operate in read-only mode
-Project structure
-src/services/
-├── infra.ts
-├── labGenerator.ts
-├── wazuhLiveConfigPatcher.ts
-├── wazuhAgentLivePatcher.ts
-├── socAiLivePatcher.ts
-├── pfsenseLiveConfigPatcher.ts
-├── policyEngine.ts
-└── generateNetworkPlan.ts
+---
 
-Generated outputs:
+User Request
+      │
+      ▼
+AI Architect
+      │
+      ▼
+Infrastructure Generator
+      │
+      ▼
+Virtual Enterprise Environment
+      │
+ ┌────┼────┬─────┐
+ ▼    ▼    ▼     ▼
+pfSense AD Wazuh Zabbix
+      │
+      ▼
+Security Monitoring
+      │
+      ▼
+AI SOC Analyst
+      │
+      ▼
+Threat Detection
+      │
+      ▼
+AI Defender
 
-outputs/
-├── generated-lab/
-├── secrets/
-├── wazuh-runtime/
-├── network-plan.json
-├── lab-definition.json
-└── policy-validation.json
-Deployment modes
-LAB mode
+## AI Agents Roadmap
 
-Default mode.
+### AI Architect
 
-Uses:
+Converts business requirements into infrastructure designs.
 
-wazuh:wazuh
+### AI SOC Analyst
 
-for API authentication.
+Analyzes security alerts, correlates events and generates incident reports.
 
-Recommended for:
+### AI Vulnerability Auditor
 
-local labs
-PoC
-testing
-development
-PRODUCTION mode
+Identifies:
 
-Production mode enables external API credentials.
+- Exposed services
+- Weak configurations
+- Missing hardening controls
+- Known vulnerabilities
+- Segmentation weaknesses
 
-Environment variables:
+### AI Red Team
 
-$env:WAZUH_DEPLOYMENT_MODE="production"
-$env:WAZUH_API_USER="soc-ai-reader"
-$env:WAZUH_API_PASSWORD="StrongPassword"
+Simulates realistic attack scenarios:
 
-Launch:
+- Reconnaissance
+- Brute force
+- Lateral movement
+- Privilege escalation
+- Data exfiltration
 
-npm run infra -- "je veux une infra avec un pfsense edge, un wazuh, un zabbix et un soc-ai"
-Wazuh API validation
+### AI Defender
 
-Generate a JWT token:
+Assists administrators by:
 
-TOKEN=$(curl -sk -u wazuh:wazuh -X POST "https://WAZUH_IP:55000/security/user/authenticate?raw=true")
+- Blocking malicious IPs
+- Creating firewall rules
+- Isolating compromised hosts
+- Recommending remediation actions
 
-Validate access:
 
-curl -k -H "Authorization: Bearer $TOKEN" "https://WAZUH_IP:55000/agents"
-
-Expected result:
-
-"status": "active"
-Security model
-Current protections
-runtime-generated secrets
-.gitignore protection
-hidden password logs
-chmod 600 on generated secrets
-API read-only logic
-policy validation engine
-Production recommendations
-Strongly recommended
-replace wazuh:wazuh
-use dedicated RBAC users
-rotate credentials
-use Vault/Passbolt/Bitwarden
-isolate SOC-AI nodes
-enable mTLS
-harden systemd services
-separate bootstrap from provisioning
-Known limitations
-Current limitations
-Wazuh API RBAC provisioning not fully automated
-single-node Wazuh deployment focus
-secrets stored locally in JSON
-repeated deployments are not fully idempotent
-Troubleshooting
-Invalid credentials
-
-Cause:
-
-API user does not exist
-wrong Wazuh API password
-confusion between Indexer credentials and Wazuh API credentials
-
-Validation:
-
-curl -sk -u wazuh:wazuh -X POST "https://WAZUH_IP:55000/security/user/authenticate?raw=true"
-Invalid token
-
-Cause:
-
-corrupted JWT token
-token copied manually
-
-Fix:
-
-Always use:
-
-TOKEN=$(curl ...)
-
-Never paste JWT manually.
-
-EDGE_REQUIRED policy error
-
-Cause:
-
-Infrastructure missing edge firewall.
-
-Fix:
-
-Add:
-
-pfsense edge
-
-inside the prompt.
-
-Example deployment
-npm run infra -- "je veux une infra avec un pfsense edge, un wazuh, un zabbix et un soc-ai"
-
-Example generated nodes:
-
-pfsense-edge-1
-wazuh-1
-zabbix-1
-soc-ai-1
-Goals
-
-Long-term objectives:
-
-full autonomous infrastructure generation
-reproducible cyber ranges
-NIS2-ready architecture
-SOC automation
-AI-assisted monitoring
-attack simulation
-detection engineering
-automated evidence generation
-License
-
-Internal project / educational cyber lab environment.

@@ -6,6 +6,7 @@ export type RoleType =
   | "wazuh_server"
   | "zabbix_server"
   | "soc_ai_agent"
+  | "ids_sensor"
   | "db_server"
   | "windows_server";
 

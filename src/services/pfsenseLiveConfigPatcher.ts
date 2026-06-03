@@ -2,6 +2,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { NetworkPlan, NetworkPlanHost } from "./type.js";
+import {
+  PfSensePlan,
+  PfSenseAlias,
+  PfSenseFirewallRule,
+  PfSenseNatRule
+} from "./pfsenseTypes.js";
 
 type SshConfig = {
   hostName: string;
@@ -151,13 +157,6 @@ function subnetOnly(ip: string): string {
   return subnet;
 }
 
-function networkFromCidr(ipCidr: string): string {
-  const ip = ipOnly(ipCidr);
-  const cidr = subnetOnly(ipCidr);
-  const [a, b, c] = ip.split(".");
-  return `${a}.${b}.${c}.0/${cidr}`;
-}
-
 function xmlNameByIndex(index: number): string {
   if (index === 0) return "lan";
   return `opt${index}`;
@@ -224,6 +223,41 @@ function generateInterfaces(host: NetworkPlanHost): string {
 
   return `\t<interfaces>${body}
 \t</interfaces>`;
+}
+
+/** Map logical interface names (dmz, management) → pfSense XML names (lan, opt1, wan). */
+function buildLogicalToPfSenseInterfaceMap(host: NetworkPlanHost): Map<string, string> {
+  const map = new Map<string, string>();
+  const hasWan = host.interfaces.some((i: { name?: string }) => i.name === "wan");
+
+  if (hasWan) {
+    host.interfaces.forEach((iface: { name: string }, index: number) => {
+      const xmlName = index === 0 ? "wan" : xmlNameByIndex(index - 1);
+      map.set(iface.name, xmlName);
+    });
+  } else {
+    host.interfaces.forEach((iface: { name: string }, index: number) => {
+      map.set(iface.name, xmlNameByIndex(index));
+    });
+  }
+
+  return map;
+}
+
+function resolvePfSenseInterface(
+  logicalName: string,
+  interfaceMap: Map<string, string>
+): string {
+  const resolved = interfaceMap.get(logicalName);
+
+  if (!resolved) {
+    throw new Error(
+      `[pfSense patch] Interface logique inconnue "${logicalName}". ` +
+        `Interfaces connues: ${[...interfaceMap.keys()].join(", ")}`
+    );
+  }
+
+  return resolved;
 }
 
 function gatewayName(routeName: string): string {
@@ -334,123 +368,156 @@ function generateStaticRoutes(host: NetworkPlanHost): string {
 \t</staticroutes>`;
 }
 
-function generateNat(host: NetworkPlanHost): string {
+function renderAddress(value: string): string {
+  if (value === "any") {
+    return `<any></any>`;
+  }
+
+  return `<address>${value}</address>`;
+}
+
+function renderAlias(alias: PfSenseAlias): string {
+  const address = alias.values.join(" ");
+
+  return `
+\t\t<alias>
+\t\t\t<name>${alias.name}</name>
+\t\t\t<type>${alias.type}</type>
+\t\t\t<address>${address}</address>
+\t\t\t<descr><![CDATA[${alias.description ?? ""}]]></descr>
+\t\t</alias>`;
+}
+
+function generateAliases(pfsensePlan: PfSensePlan): string {
+  if (pfsensePlan.aliases.length === 0) {
+    return `\t<aliases></aliases>`;
+  }
+
+  const body = pfsensePlan.aliases.map(renderAlias).join("");
+
+  return `\t<aliases>${body}
+\t</aliases>`;
+}
+
+function renderFirewallRule(
+  rule: PfSenseFirewallRule,
+  interfaceMap: Map<string, string>
+): string {
+  const protocol =
+    rule.protocol === "any"
+      ? ""
+      : `\n\t\t\t<protocol>${rule.protocol}</protocol>`;
+
+  const destinationPort =
+    rule.destinationPort
+      ? `\n\t\t\t\t<port>${rule.destinationPort}</port>`
+      : "";
+
+  const destinationPorts =
+    rule.destinationPorts
+      ? `\n\t\t\t\t<port>${rule.destinationPorts}</port>`
+      : "";
+
+  const pfsenseInterface = resolvePfSenseInterface(rule.interface, interfaceMap);
+
+  return `
+\t\t<rule>
+\t\t\t<type>${rule.action}</type>
+\t\t\t<interface>${pfsenseInterface}</interface>
+\t\t\t<ipprotocol>inet</ipprotocol>${protocol}
+\t\t\t<statetype><![CDATA[keep state]]></statetype>
+\t\t\t<source>${renderAddress(rule.source)}</source>
+\t\t\t<destination>
+\t\t\t\t${renderAddress(rule.destination)}${destinationPort}${destinationPorts}
+\t\t\t</destination>
+\t\t\t<descr><![CDATA[${rule.description}]]></descr>
+\t\t</rule>`;
+}
+
+function renderAntiLockoutRule(pfsenseInterface: string): string {
+  return `
+\t\t<rule>
+\t\t\t<type>pass</type>
+\t\t\t<interface>${pfsenseInterface}</interface>
+\t\t\t<ipprotocol>inet</ipprotocol>
+\t\t\t<statetype><![CDATA[keep state]]></statetype>
+\t\t\t<source><any></any></source>
+\t\t\t<destination><any></any></destination>
+\t\t\t<descr><![CDATA[Anti-lockout management access]]></descr>
+\t\t</rule>`;
+}
+
+function generateFilter(host: NetworkPlanHost, pfsensePlan: PfSensePlan): string {
+  const interfaceMap = buildLogicalToPfSenseInterfaceMap(host);
+
+  const antiLockout =
+    interfaceMap.has("management")
+      ? renderAntiLockoutRule(interfaceMap.get("management")!)
+      : "";
+
+  const rules = pfsensePlan.rules
+    .map((rule) => renderFirewallRule(rule, interfaceMap))
+    .join("");
+
+  return `\t<filter>${antiLockout}${rules}
+\t</filter>`;
+}
+
+function renderInboundNatRule(rule: PfSenseNatRule): string {
+  return `
+\t\t<rule>
+\t\t\t<interface>${rule.interface}</interface>
+\t\t\t<protocol>${rule.protocol}</protocol>
+\t\t\t<source>
+\t\t\t\t<any></any>
+\t\t\t</source>
+\t\t\t<destination>
+\t\t\t\t<any></any>
+\t\t\t\t<port>${rule.externalPort}</port>
+\t\t\t</destination>
+\t\t\t<target>${rule.internalIp}</target>
+\t\t\t<local-port>${rule.internalPort}</local-port>
+\t\t\t<descr><![CDATA[${rule.description}]]></descr>
+\t\t\t<natreflection>default</natreflection>
+\t\t\t<associated-rule-id>pass</associated-rule-id>
+\t\t</rule>`;
+}
+
+function generateNat(host: NetworkPlanHost, pfsensePlan: PfSensePlan): string {
+  const inboundRules = pfsensePlan.nat.map(renderInboundNatRule).join("");
+
   if (host.role !== "edge_firewall") {
-    return `\t<nat>
+    return `\t<nat>${inboundRules}
 \t\t<outbound>
 \t\t\t<mode>disabled</mode>
 \t\t</outbound>
 \t</nat>`;
   }
 
-  const directNetworks = host.interfaces
-    .filter((iface: any) => iface.name !== "wan")
-    .filter((iface: any) => iface.ip)
-    .map((iface: any) => ({
-      name: iface.name,
-      network: networkFromCidr(iface.ip)
-    }));
-
-  const routedNetworks =
-    host.static_routes?.map((route: any) => ({
-      name: route.name,
-      network: route.destination
-    })) ?? [];
-
-  const allNatNetworks = [...directNetworks, ...routedNetworks];
-
-  const rules = allNatNetworks
-    .map(
-      (item) => `
-\t\t\t<rule>
-\t\t\t\t<source>
-\t\t\t\t\t<network>${item.network}</network>
-\t\t\t\t</source>
-\t\t\t\t<destination>
-\t\t\t\t\t<any></any>
-\t\t\t\t</destination>
-\t\t\t\t<interface>wan</interface>
-\t\t\t\t<target></target>
-\t\t\t\t<poolopts></poolopts>
-\t\t\t\t<descr><![CDATA[NAT outbound ${item.name} ${item.network} via WAN]]></descr>
-\t\t\t\t<created>
-\t\t\t\t\t<time>${Math.floor(Date.now() / 1000)}</time>
-\t\t\t\t\t<username><![CDATA[automation]]></username>
-\t\t\t\t</created>
-\t\t\t</rule>`
-    )
-    .join("");
-
-  return `\t<nat>
+  const outboundRules = `
 \t\t<outbound>
-\t\t\t<mode>hybrid</mode>${rules}
-\t\t</outbound>
+\t\t\t<mode>automatic</mode>
+\t\t</outbound>`;
+
+  return `\t<nat>${inboundRules}${outboundRules}
 \t</nat>`;
 }
 
-function generateWanGuiRule(): string {
-  return `
-\t\t<rule>
-\t\t\t<type>pass</type>
-\t\t\t<interface>wan</interface>
-\t\t\t<ipprotocol>inet</ipprotocol>
-\t\t\t<protocol>tcp</protocol>
-\t\t\t<statetype><![CDATA[keep state]]></statetype>
-\t\t\t<source><any></any></source>
-\t\t\t<destination>
-\t\t\t\t<any></any>
-\t\t\t\t<port>443</port>
-\t\t\t</destination>
-\t\t\t<descr><![CDATA[TEMP allow pfSense GUI on WAN 443]]></descr>
-\t\t</rule>`;
-}
-
-function generateInternalAllowRules(host: NetworkPlanHost): string {
-  const hasWan = host.interfaces.some((i: any) => i.name === "wan");
-  const count = hasWan ? host.interfaces.length - 1 : host.interfaces.length;
-
-  let body = "";
-
-  for (let index = 0; index < count; index++) {
-    const iface = xmlNameByIndex(index);
-
-    body += `
-\t\t<rule>
-\t\t\t<type>pass</type>
-\t\t\t<interface>${iface}</interface>
-\t\t\t<ipprotocol>inet</ipprotocol>
-\t\t\t<statetype><![CDATA[keep state]]></statetype>
-\t\t\t<source><any></any></source>
-\t\t\t<destination><any></any></destination>
-\t\t\t<descr><![CDATA[TEMP allow any on ${iface}]]></descr>
-\t\t</rule>`;
-  }
-
-  return body;
-}
-
-function generateFilter(host: NetworkPlanHost): string {
-  let body = "";
-
-  if (host.role === "edge_firewall") {
-    body += generateWanGuiRule();
-  }
-
-  body += generateInternalAllowRules(host);
-
-  return `\t<filter>${body}
-\t</filter>`;
-}
-
-function patchConfigXml(baseXml: string, host: NetworkPlanHost): string {
+/** Exposed for local validation without SSH (see testPfsensePatchLocal.ts). */
+export function buildPatchedConfigXml(
+  baseXml: string,
+  host: NetworkPlanHost,
+  pfsensePlan: PfSensePlan
+): string {
   let xml = baseXml;
 
   xml = patchSystemGateway(xml, host);
   xml = replaceTag(xml, "interfaces", generateInterfaces(host));
   xml = replaceTag(xml, "gateways", generateGateways(host));
   xml = replaceTag(xml, "staticroutes", generateStaticRoutes(host));
-  xml = replaceTag(xml, "nat", generateNat(host));
-  xml = replaceTag(xml, "filter", generateFilter(host));
+  xml = replaceTag(xml, "nat", generateNat(host, pfsensePlan));
+  xml = replaceTag(xml, "aliases", generateAliases(pfsensePlan));
+  xml = replaceTag(xml, "filter", generateFilter(host, pfsensePlan));
 
   return xml;
 }
@@ -491,15 +558,28 @@ function runInternalPfSenseCutover(
 export function patchLivePfSenseConfigs(
   generatedLabDir: string,
   networkPlanPath: string,
+  pfsensePlanPath: string,
   outputDir: string
 ): void {
-  const plan = JSON.parse(fs.readFileSync(networkPlanPath, "utf-8")) as NetworkPlan;
+  const networkPlan = JSON.parse(
+    fs.readFileSync(networkPlanPath, "utf-8")
+  ) as NetworkPlan;
+
+  const pfsensePlans = JSON.parse(
+    fs.readFileSync(pfsensePlanPath, "utf-8")
+  ) as PfSensePlan[];
 
   fs.mkdirSync(outputDir, { recursive: true });
 
-  const pfsenseHosts = plan.hosts.filter((h) => h.profile === "pfsense");
+  const pfsenseHosts = networkPlan.hosts.filter((h) => h.profile === "pfsense");
 
   for (const host of pfsenseHosts) {
+    const pfsensePlan = pfsensePlans.find((p) => p.firewall === host.id);
+
+    if (!pfsensePlan) {
+      throw new Error(`Plan pfSense introuvable pour ${host.id}`);
+    }
+
     const vmName = host.id;
     const cfg = getVagrantSshConfig(generatedLabDir, vmName);
 
@@ -518,7 +598,7 @@ export function patchLivePfSenseConfigs(
 
     fs.writeFileSync(backupPath, liveXml, "utf-8");
 
-    const patchedXml = patchConfigXml(liveXml, host);
+    const patchedXml = buildPatchedConfigXml(liveXml, host, pfsensePlan);
 
     fs.writeFileSync(patchedPath, patchedXml, "utf-8");
 
