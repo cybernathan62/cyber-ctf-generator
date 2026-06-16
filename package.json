@@ -16,7 +16,7 @@
     "test:pfsense-local": "tsx src/services/testPfsensePatchLocal.ts"
   },
   "dependencies": {
-    "yaml": "^2.5.1"
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",
