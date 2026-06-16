@@ -706,13 +706,23 @@ log "VALIDATE GENERATED PASSWORDS"
 validate_password_policy "$INDEXER_ADMIN_PASSWORD"
 validate_password_policy "$DASHBOARD_PASSWORD"
 
-log "APT REPAIR"
-apt-get clean || true
-apt-get update -y
-apt-get install -f -y || true
+log "VALIDATE APT/DPKG STATE"
+# La box doit être préparée et mise à jour avant publication.
+# Ici, on refuse de réparer/mettre à niveau le système pendant le déploiement live
+# afin d'éviter les prompts interactifs grub-pc/dpkg.
+dpkg --audit
 
-log "INSTALL PREREQUISITES"
-apt-get install -y curl gnupg ca-certificates debconf adduser procps tar rsync gawk apt-transport-https openjdk-21-jre-headless
+if dpkg -l | awk '$1 ~ /^(iF|iU)/ { found=1 } END { exit found ? 0 : 1 }'; then
+  echo "[ERROR] Paquets dpkg en état cassé ou non configuré. Corrige la box puis republie-la."
+  dpkg -l | awk '$1 ~ /^(iF|iU)/ { print }'
+  exit 1
+fi
+
+log "INSTALL MISSING PREREQUISITES WITHOUT SYSTEM UPGRADE"
+# apt update est conservé pour récupérer l'index du dépôt Wazuh.
+# --no-upgrade évite de mettre à jour les paquets déjà présents dans la box.
+apt-get update -y
+apt-get install -y --no-upgrade --no-install-recommends curl gnupg ca-certificates debconf adduser procps tar rsync gawk apt-transport-https openjdk-21-jre-headless
 
 log "CONFIGURE WAZUH REPOSITORY"
 install -d -m 0755 /usr/share/keyrings

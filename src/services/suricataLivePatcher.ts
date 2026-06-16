@@ -15,7 +15,7 @@ function runSsh(target: SshAccessEntry, script: string, label: string): void {
   console.log(`\n[Suricata patch] ${label}`);
 
   const result = spawnSync(
-    "ssh.exe",
+    process.platform === "win32" ? "ssh.exe" : "ssh",
     [
       "-i",
       target.identity_file,
@@ -31,7 +31,7 @@ function runSsh(target: SshAccessEntry, script: string, label: string): void {
     {
       encoding: "utf-8",
       shell: false,
-      maxBuffer: 1024 * 1024 * 50
+      maxBuffer: 1024 * 1024 * 80
     }
   );
 
@@ -65,28 +65,71 @@ export function patchLiveSuricataSensor(outputRoot: string): void {
   }
 
   const installScript = `
-set -eu
+set -euo pipefail
 
 echo "[Suricata] Installation..."
 
-sudo apt-get update
+sudo apt-get update -y
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \\
   suricata \\
   suricata-update \\
-  jq
+  jq \\
+  netcat-openbsd \\
+  tcpdump \\
+  dnsutils \\
+  python3
 
-echo "[Suricata] Mise à jour des règles..."
+echo "[Suricata] Détection interface IDS..."
 
-sudo suricata-update || {
-  echo "[Suricata] WARNING: suricata-update a échoué, création fallback rules file"
-  sudo mkdir -p /var/lib/suricata/rules
-  sudo touch /var/lib/suricata/rules/suricata.rules
-}
+IFACE="$(ip -o -4 addr show scope global | awk '{print $2, $4}' | awk '$2 !~ /^10\\.0\\.2\\./ && $2 !~ /^127\\./ {print $1; exit}' || true)"
 
-echo "[Suricata] Activation eve.json..."
+if [ -z "$IFACE" ]; then
+  IFACE="$(ip route | awk '/default/ {print $5; exit}')"
+fi
+
+if [ -z "$IFACE" ]; then
+  echo "[Suricata] ERREUR: interface introuvable"
+  ip -br a || true
+  exit 1
+fi
+
+echo "[Suricata] Interface utilisée: $IFACE"
+
+echo "[Suricata] Préparation des répertoires..."
 
 sudo mkdir -p /var/log/suricata
-sudo chown -R suricata:suricata /var/log/suricata || true
+sudo mkdir -p /var/lib/suricata/rules
+sudo mkdir -p /etc/suricata/rules
+
+sudo chown -R root:adm /var/log/suricata || true
+sudo chmod 750 /var/log/suricata || true
+
+echo "[Suricata] Mise à jour des règles Emerging Threats..."
+
+set +e
+timeout 180 sudo suricata-update
+SURICATA_UPDATE_CODE=$?
+set -e
+
+if [ "$SURICATA_UPDATE_CODE" -ne 0 ]; then
+  echo "[Suricata] WARNING: suricata-update KO ou timeout, création fichier fallback"
+  sudo touch /var/lib/suricata/rules/suricata.rules
+fi
+
+if [ ! -f /var/lib/suricata/rules/suricata.rules ]; then
+  echo "[Suricata] WARNING: suricata.rules absent après update, création fallback"
+  sudo touch /var/lib/suricata/rules/suricata.rules
+fi
+
+echo "[Suricata] Ajout règle locale de validation DNS..."
+
+sudo tee /var/lib/suricata/rules/local.rules >/dev/null <<'EOF'
+alert dns any any -> any any (msg:"LOCAL TEST DNS example.com"; dns.query; content:"example.com"; nocase; sid:1000002; rev:1;)
+EOF
+
+sudo cp /var/lib/suricata/rules/local.rules /etc/suricata/rules/local.rules || true
+
+echo "[Suricata] Configuration suricata.yaml..."
 
 if [ -f /etc/suricata/suricata.yaml ]; then
   sudo cp /etc/suricata/suricata.yaml /etc/suricata/suricata.yaml.bak.$(date +%Y%m%d%H%M%S)
@@ -94,11 +137,33 @@ fi
 
 sudo python3 - <<'PY'
 from pathlib import Path
+import re
 
 p = Path("/etc/suricata/suricata.yaml")
 s = p.read_text()
 
-s = s.replace('HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"', 'HOME_NET: "[10.0.0.0/8]"')
+s = re.sub(
+    r'HOME_NET:\\s*"\\[[^"]+\\]"',
+    'HOME_NET: "[10.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12]"',
+    s
+)
+
+s = re.sub(
+    r'default-rule-path:\\s*.*',
+    'default-rule-path: /var/lib/suricata/rules',
+    s
+)
+
+if "rule-files:" not in s:
+    s += "\\n\\nrule-files:\\n  - suricata.rules\\n  - local.rules\\n"
+else:
+    s = re.sub(r'\\n\\s*-\\s*local\\.rules\\s*', '\\n', s)
+    s = re.sub(
+        r'(rule-files:\\s*\\n(?:\\s*-\\s*[^\\n]+\\n)*)',
+        lambda m: m.group(1) + "  - local.rules\\n" if "- local.rules" not in m.group(1) else m.group(1),
+        s,
+        count=1
+    )
 
 if "eve-log:" not in s:
     s += """
@@ -115,35 +180,61 @@ outputs:
         - tls
         - flow
 """
+else:
+    s = re.sub(r'(eve-log:\\s*\\n\\s*)enabled:\\s*no', r'\\1enabled: yes', s, count=1)
 
 p.write_text(s)
 PY
 
-echo "[Suricata] Configuration interface..."
+echo "[Suricata] Configuration /etc/default/suricata..."
 
-IFACE="$(ip -o link show | awk -F': ' '{print $2}' | grep -E '^eth1$|^enp0s8$' | head -n1 || true)"
+if [ -f /etc/default/suricata ]; then
+  sudo sed -i "s/^LISTENMODE=.*/LISTENMODE=af-packet/" /etc/default/suricata || true
+  sudo sed -i "s/^IFACE=.*/IFACE=$IFACE/" /etc/default/suricata || true
 
-if [ -z "$IFACE" ]; then
-  IFACE="$(ip route | awk '/default/ {print $5; exit}')"
+  grep -q "^IFACE=" /etc/default/suricata || echo "IFACE=$IFACE" | sudo tee -a /etc/default/suricata >/dev/null
+  grep -q "^LISTENMODE=" /etc/default/suricata || echo "LISTENMODE=af-packet" | sudo tee -a /etc/default/suricata >/dev/null
 fi
 
-if [ -z "$IFACE" ]; then
-  echo "[Suricata] ERREUR: interface introuvable"
+echo "[Suricata] Correction service systemd..."
+
+SERVICE_FILE="/lib/systemd/system/suricata.service"
+
+if [ -f "$SERVICE_FILE" ]; then
+  sudo cp "$SERVICE_FILE" "$SERVICE_FILE.bak.$(date +%Y%m%d%H%M%S)"
+  sudo sed -i "s|^ExecStart=.*|ExecStart=/usr/bin/suricata -D --af-packet=$IFACE -c /etc/suricata/suricata.yaml --pidfile /run/suricata.pid|" "$SERVICE_FILE"
+else
+  echo "[Suricata] ERREUR: service systemd introuvable: $SERVICE_FILE"
   exit 1
 fi
 
-echo "[Suricata] Interface utilisée: $IFACE"
+echo "[Suricata] Test configuration..."
 
-sudo sed -i "s/^LISTENMODE=.*/LISTENMODE=af-packet/" /etc/default/suricata || true
-sudo sed -i "s/^IFACE=.*/IFACE=$IFACE/" /etc/default/suricata || true
+sudo suricata -T -c /etc/suricata/suricata.yaml || {
+  echo "[Suricata] ERREUR: configuration Suricata invalide"
+  exit 1
+}
 
-sudo systemctl enable suricata
+echo "[Suricata] Démarrage service..."
+
+sudo systemctl stop suricata || true
+sudo rm -f /run/suricata.pid
+
+sudo systemctl daemon-reload
+sudo systemctl reset-failed suricata || true
+sudo systemctl enable suricata || true
 sudo systemctl restart suricata
 
 sleep 5
 
-sudo systemctl is-active --quiet suricata
-sudo systemctl --no-pager --full status suricata
+if ! sudo systemctl is-active --quiet suricata; then
+  echo "[Suricata] ERREUR: service Suricata non actif"
+  sudo systemctl --no-pager --full status suricata || true
+  sudo journalctl -u suricata --no-pager -n 120 || true
+  exit 1
+fi
+
+sudo systemctl --no-pager --full status suricata || true
 
 test -f /var/log/suricata/eve.json || sudo touch /var/log/suricata/eve.json
 sudo chmod 640 /var/log/suricata/eve.json || true
@@ -174,19 +265,46 @@ block = """
   </localfile>
 """
 
-s = s.replace("</ossec_config>", block + "\\n</ossec_config>")
+idx = s.rfind("</ossec_config>")
+if idx == -1:
+    raise SystemExit("[Suricata] ERREUR: </ossec_config> introuvable dans ossec.conf")
 
+s = s[:idx] + block + "\\n" + s[idx:]
 p.write_text(s)
 PY
 
-  sudo systemctl restart wazuh-agent
-  sudo systemctl is-active --quiet wazuh-agent
+  sudo systemctl restart wazuh-agent || {
+    echo "[Suricata] ERREUR: restart wazuh-agent KO"
+    sudo systemctl --no-pager --full status wazuh-agent || true
+    sudo tail -n 120 /var/ossec/logs/ossec.log || true
+    exit 1
+  }
+
+  sudo systemctl is-active --quiet wazuh-agent || {
+    echo "[Suricata] ERREUR: wazuh-agent non actif"
+    sudo systemctl --no-pager --full status wazuh-agent || true
+    exit 1
+  }
+
   sudo tail -n 50 /var/ossec/logs/ossec.log | grep -iE "suricata|eve|localfile|error" || true
 else
   echo "[Suricata] WARNING: Wazuh agent absent, skip intégration eve.json."
 fi
 
+echo "[Suricata] Validation DNS locale..."
+
+set +e
+dig example.com >/dev/null 2>&1 || getent hosts example.com >/dev/null 2>&1
+sleep 8
+sudo grep '"event_type":"alert"' /var/log/suricata/eve.json | tail -5
+set -e
+
+echo "[Suricata] Validation fichiers..."
+ls -l /var/log/suricata || true
+sudo tail -n 5 /var/log/suricata/eve.json || true
+
 echo "[Suricata] OK"
+exit 0
 `;
 
   runSsh(target, installScript, "installation et configuration Suricata");

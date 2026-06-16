@@ -10,6 +10,9 @@ import { patchLiveWazuhConfigs } from "./wazuhLiveConfigPatcher.production-mode.
 import { patchLiveWazuhAgents } from "./wazuhAgentLivePatcher.js";
 import { patchLiveSocAiAgent } from "./socAiLivePatcher.js";
 import { patchLiveSuricataSensor } from "./suricataLivePatcher.js";
+import { patchLiveMariaDB } from "./mariadbLivePatcher.js";
+import { patchLiveZabbix } from "./zabbixLivePatcher.js";
+import { patchLiveZabbixAgents } from "./zabbixAgentLivePatcher.js";
 import { validateLabWithPolicies } from "./policyEngine.js";
 import {
   LabDefinition,
@@ -284,6 +287,7 @@ function waitForDebianSsh(generatedLabDir: string): void {
     "bastion-1",
     "reverse-proxy-1",
     "db-server-1",
+    "db-server",
     "wazuh-1",
     "zabbix-1",
     "soc-ai-1",
@@ -313,7 +317,7 @@ function main(): void {
 
   if (!userPrompt) {
     throw new Error(
-      'Exemple: npm run infra -- "je veux un pfsense avec un bastion segmenter par un pfsense en ha, un cluster wazuh et une sonde suricata"'
+      'Exemple: npm run infra -- "je veux un pfsense edge avec une dmz, un bastion, wazuh, zabbix, une db et une sonde suricata"'
     );
   }
 
@@ -377,15 +381,15 @@ function main(): void {
   }
 
   console.log("Network plan généré :", networkPlanFile);
-  
+
   generatePfSenseMinimalPlan(networkPlanFile, pfSensePlanFile);
 
   if (!fs.existsSync(pfSensePlanFile)) {
-  throw new Error(`[infra] pfsense-plan.json non généré: ${pfSensePlanFile}`);
+    throw new Error(`[infra] pfsense-plan.json non généré: ${pfSensePlanFile}`);
   }
-  
+
   console.log("pfSense minimal plan généré :", pfSensePlanFile);
-  
+
   const generator = new LabGeneratorService();
 
   const result = generator.generateLab({
@@ -436,17 +440,38 @@ function main(): void {
 
   waitSeconds(30);
 
-  waitForVmSsh("wazuh-1", generatedLabDir, 900);
+  if (vagrantExists("wazuh-1", generatedLabDir)) {
+    waitForVmSsh("wazuh-1", generatedLabDir, 900);
+    patchLiveWazuhConfigs(outputRoot);
 
-  patchLiveWazuhConfigs(outputRoot);
+    waitSeconds(10);
+
+    waitForDebianSsh(generatedLabDir);
+    patchLiveWazuhAgents(outputRoot);
+  } else {
+    console.log("[infra] Aucun Wazuh déployé, skip Wazuh.");
+  }
 
   waitSeconds(10);
 
-  waitForDebianSsh(generatedLabDir);
+  if (vagrantExists("db-server-1", generatedLabDir) || vagrantExists("db-server", generatedLabDir)) {
+    const dbVmName = vagrantExists("db-server-1", generatedLabDir) ? "db-server-1" : "db-server";
+    waitForVmSsh(dbVmName, generatedLabDir, 900);
+    patchLiveMariaDB(outputRoot);
+  } else {
+    console.log("[infra] Aucun serveur MariaDB déployé, skip.");
+  }
 
-  patchLiveWazuhAgents(outputRoot);
+    if (vagrantExists("zabbix-1", generatedLabDir)) {
+    waitForVmSsh("zabbix-1", generatedLabDir, 900);
+    patchLiveZabbix(outputRoot);
 
-  waitSeconds(10);
+    waitSeconds(10);
+
+    patchLiveZabbixAgents(outputRoot);
+  } else {
+    console.log("[infra] Aucun Zabbix déployé, skip.");
+  }
 
   if (vagrantExists("soc-ai-1", generatedLabDir)) {
     waitForVmSsh("soc-ai-1", generatedLabDir, 900);
@@ -467,13 +492,13 @@ function main(): void {
   }
 
   if (vagrantExists("ids-sensor-1-1", generatedLabDir)) {
-  waitForVmSsh("ids-sensor-1-1", generatedLabDir, 900);
-  patchLiveSuricataSensor(outputRoot);
-} else {
-  console.log("[infra] Aucun IDS Suricata déployé, skip.");
-}
+    waitForVmSsh("ids-sensor-1-1", generatedLabDir, 900);
+    patchLiveSuricataSensor(outputRoot);
+  } else {
+    console.log("[infra] Aucun IDS Suricata déployé, skip.");
+  }
 
-  console.log("\nInfra complète déployée : pfSense + Debian + Wazuh + agents Wazuh + SOC AI/IDS si demandés.");
+  console.log("\nInfra complète déployée : pfSense + Debian + Wazuh + agents + MariaDB + Zabbix + SOC AI/IDS si demandés.");
 }
 
 main();

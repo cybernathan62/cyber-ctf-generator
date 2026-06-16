@@ -197,6 +197,18 @@ function findPrimaryInternalInterface(host: NetworkPlanHost): InternalInterface 
   return primary;
 }
 
+function findPrimaryLinuxInterfaceName(host: NetworkPlanHost): string {
+  const interfaces = getInternalInterfaces(host);
+  const primary = findPrimaryInternalInterface(host);
+  const index = interfaces.findIndex((iface) => iface === primary);
+
+  if (index < 0) {
+    throw new Error(`Interface primaire introuvable pour ${host.id}`);
+  }
+
+  return linuxInterfaceName(index);
+}
+
 function findGatewayForHost(host: NetworkPlanHost): string {
   const iface = findPrimaryInternalInterface(host);
 
@@ -295,6 +307,50 @@ function isDebianHost(host: NetworkPlanHost): boolean {
   return host.profile !== "pfsense";
 }
 
+function patchDebianPackageHealth(
+  sshCommand: string,
+  cfg: SshConfig,
+  generatedLabDir: string,
+  vmName: string
+): void {
+  /*
+    Important :
+    Les mises à jour lourdes Debian doivent être faites pendant la fabrication
+    de la box Vagrant, pas pendant le déploiement live du lab.
+
+    On évite volontairement ici :
+    - apt upgrade
+    - apt full-upgrade
+    - apt dist-upgrade
+    - grub-install
+    - update-grub
+
+    Raison :
+    grub-pc peut ouvrir une question interactive "GRUB install devices"
+    et laisser dpkg en état half-configured, ce qui casse ensuite Wazuh/APT.
+  */
+  run(
+    sshCommand,
+    sshArgs(
+      cfg,
+      [
+        "export DEBIAN_FRONTEND=noninteractive",
+        "sudo dpkg --configure -a",
+        "sudo apt-get -f install -y",
+        "sudo apt-get update",
+        "sudo dpkg --audit",
+        "if dpkg -l | grep -E '^(iF|iU)'; then echo '[Debian patch] ERREUR: paquets cassés détectés'; exit 1; fi",
+        "apt list --upgradable 2>/dev/null || true",
+        "apt-cache policy libfreerdp3-3 || true",
+        "uname -r || true"
+      ].join("; ")
+    ),
+    generatedLabDir,
+    `Contrôle santé APT/DPKG Debian ${vmName}`,
+    false
+  );
+}
+
 export function patchLiveDebianConfigs(
   generatedLabDir: string,
   networkPlanPath: string,
@@ -314,6 +370,7 @@ export function patchLiveDebianConfigs(
     const cfg = getVagrantSshConfig(generatedLabDir, vmName);
 
     const gateway = findGatewayForHost(host);
+    const primaryLinuxInterface = findPrimaryLinuxInterfaceName(host);
     const interfacesContent = generateInterfacesFile(host);
     const interfacesPath = path.join(outputDir, `${vmName}.interfaces`);
 
@@ -336,37 +393,55 @@ export function patchLiveDebianConfigs(
       `Application /etc/network/interfaces ${vmName}`
     );
 
-    const runtimeInterfaceCommands = getInternalInterfaces(host).flatMap((iface, index) => {
-  const linuxName = linuxInterfaceName(index);
+    const internalInterfaces = getInternalInterfaces(host);
 
-  if (!iface.ip) return [];
+    const runtimeInterfaceCommands = internalInterfaces.flatMap((iface, index) => {
+      const linuxName = linuxInterfaceName(index);
 
-  return [
-    `sudo ip link set ${linuxName} up || true`,
-    `sudo ip addr replace ${iface.ip} dev ${linuxName} || true`
-  ];
-});
+      if (!iface.ip) return [];
+
+      return [
+        `sudo ip link set ${linuxName} up || true`,
+        `sudo ip addr replace ${iface.ip} dev ${linuxName} || true`
+      ];
+    });
+
+    const interfaceBringUpCommands = internalInterfaces.flatMap((_, index) => {
+      const linuxName = linuxInterfaceName(index);
+
+      return [
+        `sudo ip link set ${linuxName} up || true`,
+        `sudo ifdown ${linuxName} >/dev/null 2>&1 || true`,
+        `sudo ifup ${linuxName} >/dev/null 2>&1 || true`
+      ];
+    });
+
+    const interfaceDebugCommands = internalInterfaces.flatMap((_, index) => {
+      const linuxName = linuxInterfaceName(index);
+
+      return [
+        `ip addr show ${linuxName} || true`
+      ];
+    });
 
     run(
       sshCommand,
       sshArgs(
         cfg,
         [
-          "sudo ip link set enp0s8 up || true",
-          "sudo ip link set enp0s9 up || true",
+          ...interfaceBringUpCommands,
           "sleep 2",
-          "sudo ifdown enp0s8 >/dev/null 2>&1 || true",
-          "sudo ifdown enp0s9 >/dev/null 2>&1 || true",
-          "sudo ifup enp0s8 >/dev/null 2>&1 || true",
-          "sudo ifup enp0s9 >/dev/null 2>&1 || true",
           ...runtimeInterfaceCommands,
+
           "sudo ip route del default via 10.0.2.2 dev enp0s3 >/dev/null 2>&1 || true",
           "sudo ip route del default dev enp0s3 >/dev/null 2>&1 || true",
-          `sudo ip route replace default via ${gateway} dev enp0s8 || true`,
+
+          `sudo ip route replace default via ${gateway} dev ${primaryLinuxInterface} || true`,
+
           "sudo rm -f /etc/resolv.conf",
           `sudo /bin/sh -c 'printf "nameserver ${gateway}\\nnameserver 8.8.8.8\\nnameserver 1.1.1.1\\n" > /etc/resolv.conf'`,
-          "ip addr show enp0s8",
-          "ip addr show enp0s9 || true",
+
+          ...interfaceDebugCommands,
           "ip route",
           "ip route get 8.8.8.8 || true",
           "cat /etc/resolv.conf",
@@ -377,6 +452,13 @@ export function patchLiveDebianConfigs(
       generatedLabDir,
       `Activation interfaces + gateway + DNS ${vmName}`,
       true
+    );
+
+    patchDebianPackageHealth(
+      sshCommand,
+      cfg,
+      generatedLabDir,
+      vmName
     );
   }
 }

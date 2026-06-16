@@ -516,4 +516,6 @@ export function patchLiveWazuhAgents(outputsDir = path.join(process.cwd(), "outp
   }
 }
 
+export const patchLiveWazuhAgentConfigs = patchLiveWazuhAgents;
+
 export default patchLiveWazuhAgents;
