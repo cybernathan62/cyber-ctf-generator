@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>CTF Lab Dashboard</title>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm/css/xterm.css">
+
+<style>
+body{
+  margin:0;
+  padding:30px;
+  background:#0f172a;
+  color:white;
+  font-family:Segoe UI,Arial,sans-serif;
+}
+
+.topology{
+  height:420px;
+  background:linear-gradient(#f8fafc,#e5e7eb);
+  border-radius:18px;
+  position:relative;
+  margin-bottom:25px;
+  overflow:hidden;
+}
+
+.node{
+  position:absolute;
+  width:140px;
+  height:100px;
+  border-radius:16px;
+  box-shadow:0 16px 35px rgba(0,0,0,.25);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  font-weight:bold;
+}
+
+.pfsense{background:#991b1b;color:white}
+.debian{background:#dbeafe;color:#111827}
+.server{background:#334155;color:white}
+
+.cable{
+  position:absolute;
+  height:6px;
+  background:#0891b2;
+  border-radius:999px;
+}
+
+#terminal{
+  height:420px;
+  border-radius:12px;
+  overflow:hidden;
+  border:1px solid #334155;
+}
+</style>
+</head>
+
+<body>
+
+<h1>🚀 CTF Lab Dashboard</h1>
+
+<h2>Topologie</h2>
+
+<div class="topology">
+  <div class="cable" style="left:160px;top:190px;width:230px"></div>
+  <div class="cable" style="left:500px;top:190px;width:220px"></div>
+  <div class="cable" style="left:500px;top:115px;width:220px"></div>
+  <div class="cable" style="left:500px;top:270px;width:220px"></div>
+
+  <div class="node pfsense" style="left:60px;top:140px">🔥<br>pfSense Edge</div>
+  <div class="node pfsense" style="left:390px;top:140px">🔥<br>pfSense SOC</div>
+  <div class="node server" style="left:720px;top:65px">🛡️<br>Wazuh</div>
+  <div class="node server" style="left:720px;top:220px">📊<br>Zabbix</div>
+  <div class="node debian" style="left:390px;top:290px">💻<br>Bastion</div>
+</div>
+
+<h2>Terminal interactif</h2>
+<div id="terminal"></div>
+
+<script type="module">
+import { Terminal } from "https://cdn.jsdelivr.net/npm/@xterm/xterm/+esm";
+import { FitAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-fit/+esm";
+
+const term = new Terminal({
+  cursorBlink: true,
+  fontSize: 14,
+  theme: {
+    background: "#020617",
+    foreground: "#f8fafc"
+  }
+});
+
+const fitAddon = new FitAddon();
+term.loadAddon(fitAddon);
+
+term.open(document.getElementById("terminal"));
+fitAddon.fit();
+
+const socket = new WebSocket("ws://localhost:3001/terminal");
+
+socket.onmessage = event => {
+  term.write(event.data);
+};
+
+term.onData(data => {
+  socket.send(data);
+});
+
+window.addEventListener("resize", () => {
+  fitAddon.fit();
+});
+</script>
+
+</body>
+</html>

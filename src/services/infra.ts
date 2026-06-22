@@ -13,6 +13,7 @@ import { patchLiveSuricataSensor } from "./suricataLivePatcher.js";
 import { patchLiveMariaDB } from "./mariadbLivePatcher.js";
 import { patchLiveZabbix } from "./zabbixLivePatcher.js";
 import { patchLiveZabbixAgents } from "./zabbixAgentLivePatcher.js";
+import { patchLiveZabbixPfSense } from "./zabbixPfsensePatcher.js";
 import { validateLabWithPolicies } from "./policyEngine.js";
 import {
   LabDefinition,
@@ -462,7 +463,7 @@ function main(): void {
     console.log("[infra] Aucun serveur MariaDB déployé, skip.");
   }
 
-    if (vagrantExists("zabbix-1", generatedLabDir)) {
+  if (vagrantExists("zabbix-1", generatedLabDir)) {
     waitForVmSsh("zabbix-1", generatedLabDir, 900);
     patchLiveZabbix(outputRoot);
 
@@ -496,6 +497,17 @@ function main(): void {
     patchLiveSuricataSensor(outputRoot);
   } else {
     console.log("[infra] Aucun IDS Suricata déployé, skip.");
+  }
+
+  if (vagrantExists("zabbix-1", generatedLabDir)) {
+    try {
+      patchLiveZabbixPfSense(outputRoot);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[infra] Zabbix pfSense non appliqué: ${message}`);
+    }
+  } else {
+    console.log("[infra] Aucun Zabbix déployé, skip pfSense dans Zabbix.");
   }
 
   console.log("\nInfra complète déployée : pfSense + Debian + Wazuh + agents + MariaDB + Zabbix + SOC AI/IDS si demandés.");
