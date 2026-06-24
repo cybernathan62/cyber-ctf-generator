@@ -57,6 +57,12 @@ export const ROLE_MAP: Record<
     default_zone: "soc",
     default_variant: "simple"
   },
+    opencti_server: {
+    naming: "opencti",
+    profile: "debian-wazuh",
+    default_zone: "soc",
+    default_variant: "simple"
+  },
   db_server: {
     naming: "db-server",
     profile: "debian-wazuh",

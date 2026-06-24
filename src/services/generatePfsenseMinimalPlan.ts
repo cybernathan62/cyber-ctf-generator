@@ -8,29 +8,76 @@ import {
   PfSensePlan
 } from "./pfsenseTypes.js";
 
+type Protocol = "tcp" | "udp" | "icmp" | "any";
+
 type RoleFlow = {
   fromRoles: string[];
   toRoles: string[];
-  protocol: "tcp" | "udp" | "icmp" | "any";
+  protocol: Protocol;
   ports?: string[];
   description: string;
 };
 
-const AGENT_ROLES = [
+const DB_ROLES = ["db_server", "database", "mariadb_server", "mysql_server"];
+
+const FIREWALL_ROLES = ["edge_firewall", "internal_firewall"];
+
+const OPENCTI_ROLES = ["opencti_server"];
+
+const WAZUH_AGENT_ROLES = [
   "bastion",
   "reverse_proxy",
   "db_server",
   "database",
   "mariadb_server",
   "mysql_server",
-  "wazuh_server",
   "ids_sensor",
-  "soc_ai_agent"
+  "soc_ai_agent",
+  "zabbix_server",
+  "opencti_server"
 ];
 
-const DB_ROLES = ["db_server", "database", "mariadb_server", "mysql_server"];
+const ZABBIX_AGENT_ROLES = [
+  "bastion",
+  "opencti_server",
+  "reverse_proxy",
+  "db_server",
+  "database",
+  "mariadb_server",
+  "mysql_server",
+  "ids_sensor",
+  "soc_ai_agent",
+  "wazuh_server",
+  "zabbix_server"
+];
 
 const ROLE_FLOWS: RoleFlow[] = [
+  {
+    fromRoles: WAZUH_AGENT_ROLES,
+    toRoles: ["wazuh_server"],
+    protocol: "tcp",
+    ports: ["1514", "1515", "55000"],
+    description: "Allow Wazuh agents to reach Wazuh manager"
+  },
+  {
+    fromRoles: WAZUH_AGENT_ROLES,
+    toRoles: ["wazuh_server"],
+    protocol: "icmp",
+    description: "Allow Wazuh agents ICMP diagnostic to Wazuh"
+  },
+  {
+    fromRoles: ["zabbix_server"],
+    toRoles: FIREWALL_ROLES,
+    protocol: "udp",
+    ports: ["161"],
+    description: "Allow Zabbix SNMP polling to pfSense"
+  },
+  {
+    fromRoles: ["zabbix_server"],
+    toRoles: FIREWALL_ROLES,
+    protocol: "icmp",
+    description: "Allow Zabbix ICMP ping to pfSense"
+  },
   {
     fromRoles: ["zabbix_server"],
     toRoles: DB_ROLES,
@@ -46,45 +93,75 @@ const ROLE_FLOWS: RoleFlow[] = [
   },
   {
     fromRoles: ["zabbix_server"],
-    toRoles: AGENT_ROLES,
+    toRoles: ZABBIX_AGENT_ROLES,
     protocol: "tcp",
     ports: ["10050"],
     description: "Allow Zabbix server to poll agents"
   },
   {
-    fromRoles: AGENT_ROLES,
+    fromRoles: ZABBIX_AGENT_ROLES,
     toRoles: ["zabbix_server"],
     protocol: "tcp",
     ports: ["10051"],
     description: "Allow Zabbix agents active checks to server"
   },
   {
-    fromRoles: AGENT_ROLES,
+    fromRoles: ZABBIX_AGENT_ROLES,
     toRoles: ["zabbix_server"],
     protocol: "icmp",
-    description: "Allow agents ICMP diagnostic to Zabbix"
+    description: "Allow Zabbix ICMP diagnostic"
   },
   {
     fromRoles: ["wazuh_server"],
-    toRoles: DB_ROLES,
+    toRoles: OPENCTI_ROLES,
     protocol: "tcp",
-    ports: ["22", "10050"],
-    description: "Allow Wazuh supervision access to DB server"
+    ports: ["8080", "443"],
+    description: "Allow Wazuh to communicate with OpenCTI"
+  },
+  {
+    fromRoles: ["zabbix_server"],
+    toRoles: OPENCTI_ROLES,
+    protocol: "tcp",
+    ports: ["8080", "443"],
+    description: "Allow Zabbix to communicate with OpenCTI"
   },
   {
     fromRoles: ["bastion"],
-    toRoles: [...AGENT_ROLES, "zabbix_server"],
+    toRoles: OPENCTI_ROLES,
+    protocol: "tcp",
+    ports: ["8080", "443", "22"],
+    description: "Allow Bastion administration of OpenCTI"
+  },
+  {
+    fromRoles: OPENCTI_ROLES,
+    toRoles: ["wazuh_server"],
+    protocol: "icmp",
+    description: "Allow OpenCTI ICMP diagnostic to Wazuh"
+  },
+  {
+    fromRoles: OPENCTI_ROLES,
+    toRoles: ["zabbix_server"],
+    protocol: "icmp",
+    description: "Allow OpenCTI ICMP diagnostic to Zabbix"
+  },
+  {
+    fromRoles: ["bastion"],
+    toRoles: [...ZABBIX_AGENT_ROLES, "zabbix_server", "wazuh_server"],
     protocol: "tcp",
     ports: ["22"],
     description: "Allow Bastion SSH administration"
   },
   {
     fromRoles: ["bastion"],
-    toRoles: [...AGENT_ROLES, "zabbix_server"],
+    toRoles: [...ZABBIX_AGENT_ROLES, "zabbix_server", "wazuh_server"],
     protocol: "icmp",
     description: "Allow Bastion ICMP diagnostic"
   }
 ];
+
+function ipOnly(ipCidr: string): string {
+  return ipCidr.split("/")[0];
+}
 
 function networkFromCidr(ipCidr: string): string {
   const [ip, cidr] = ipCidr.split("/");
@@ -96,22 +173,18 @@ function networkFromCidr(ipCidr: string): string {
   return `${a}.${b}.${c}.0/${cidr}`;
 }
 
-function ipOnly(ipCidr: string): string {
-  return ipCidr.split("/")[0];
+function aliasName(rawName: string): string {
+  return `${rawName.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}_NET`;
 }
 
-function aliasName(interfaceName: string): string {
-  return `${interfaceName.toUpperCase()}_NET`;
+function roleAliasName(role: string): string {
+  return `${role.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}_HOSTS`;
 }
 
 function firstIp(host: NetworkPlanHost): string | null {
-  const iface = host.interfaces?.find((i: any) => i.ip);
-  return iface?.ip ? ipOnly(iface.ip) : null;
-}
-
-function firstNetwork(host: NetworkPlanHost): string | null {
-  const iface = host.interfaces?.find((i: any) => i.ip);
-  return iface?.ip ? networkFromCidr(iface.ip) : null;
+  const iface = host.interfaces?.find((i: any) => i.ip && i.name !== "monitor");
+  const fallback = host.interfaces?.find((i: any) => i.ip);
+  return iface?.ip ? ipOnly(iface.ip) : fallback?.ip ? ipOnly(fallback.ip) : null;
 }
 
 function findHostsByRoles(
@@ -119,23 +192,6 @@ function findHostsByRoles(
   roles: string[]
 ): NetworkPlanHost[] {
   return allHosts.filter((h) => roles.includes(h.role));
-}
-
-function findHostIpByRoles(
-  allHosts: NetworkPlanHost[],
-  roles: string[]
-): string | null {
-  const host = allHosts.find((h) => roles.includes(h.role));
-  return host ? firstIp(host) : null;
-}
-
-function findWazuhIp(allHosts: NetworkPlanHost[]): string | null {
-  return findHostIpByRoles(allHosts, ["wazuh_server"]);
-}
-
-function findWazuhNetwork(allHosts: NetworkPlanHost[]): string | null {
-  const wazuh = allHosts.find((h) => h.role === "wazuh_server");
-  return wazuh ? firstNetwork(wazuh) : null;
 }
 
 function addAliasOnce(
@@ -148,76 +204,126 @@ function addAliasOnce(
   aliases.push(alias);
 }
 
+function addRuleOnce(
+  rules: PfSenseFirewallRule[],
+  seen: Set<string>,
+  rule: PfSenseFirewallRule
+): void {
+  const key = JSON.stringify(rule);
+  if (seen.has(key)) return;
+  seen.add(key);
+  rules.push(rule);
+}
+
+function addHostAliasByRoles(
+  aliases: PfSenseAlias[],
+  seen: Set<string>,
+  allHosts: NetworkPlanHost[],
+  alias: string,
+  roles: string[],
+  description: string
+): void {
+  const values = findHostsByRoles(allHosts, roles)
+    .map(firstIp)
+    .filter((ip): ip is string => Boolean(ip));
+
+  if (values.length === 0) return;
+
+  addAliasOnce(aliases, seen, {
+    name: alias,
+    type: "host",
+    values,
+    description
+  });
+}
+
 function addServiceAliases(
   aliases: PfSenseAlias[],
   seen: Set<string>,
   allHosts: NetworkPlanHost[]
 ): void {
-  const zabbixHosts = findHostsByRoles(allHosts, ["zabbix_server"]);
-  const mariadbHosts = findHostsByRoles(allHosts, DB_ROLES);
+  addHostAliasByRoles(
+    aliases,
+    seen,
+    allHosts,
+    "WAZUH_SERVER",
+    ["wazuh_server"],
+    "Wazuh manager"
+  );
 
-  const zabbixIps = zabbixHosts.map(firstIp).filter((ip): ip is string => Boolean(ip));
-  const mariadbIps = mariadbHosts.map(firstIp).filter((ip): ip is string => Boolean(ip));
+  addHostAliasByRoles(
+    aliases,
+    seen,
+    allHosts,
+    "ZABBIX_SERVER",
+    ["zabbix_server"],
+    "Zabbix server"
+  );
 
-  if (zabbixIps.length > 0) {
-    addAliasOnce(aliases, seen, {
-      name: "ZABBIX_SERVER",
-      type: "host",
-      values: [zabbixIps[0]],
-      description: "Primary Zabbix server"
-    });
+  addHostAliasByRoles(
+    aliases,
+    seen,
+    allHosts,
+    "OPENCTI_SERVER",
+    OPENCTI_ROLES,
+    "OpenCTI server"
+  );
 
-    addAliasOnce(aliases, seen, {
-      name: "ZABBIX_SERVERS",
-      type: "host",
-      values: zabbixIps,
-      description: "All Zabbix servers"
-    });
-  }
+  addHostAliasByRoles(
+    aliases,
+    seen,
+    allHosts,
+    "MARIADB_SERVER",
+    DB_ROLES,
+    "MariaDB or DB server"
+  );
 
-  if (mariadbIps.length > 0) {
-    addAliasOnce(aliases, seen, {
-      name: "MARIADB_SERVER",
-      type: "host",
-      values: [mariadbIps[0]],
-      description: "Primary MariaDB server"
-    });
+  addHostAliasByRoles(
+    aliases,
+    seen,
+    allHosts,
+    "WAZUH_AGENTS",
+    WAZUH_AGENT_ROLES,
+    "Hosts monitored by Wazuh"
+  );
 
-    addAliasOnce(aliases, seen, {
-      name: "MARIADB_SERVERS",
-      type: "host",
-      values: mariadbIps,
-      description: "All MariaDB or DB servers"
-    });
+  addHostAliasByRoles(
+    aliases,
+    seen,
+    allHosts,
+    "ZABBIX_AGENTS",
+    ZABBIX_AGENT_ROLES,
+    "Hosts monitored by Zabbix"
+  );
+
+  const roles = new Set(allHosts.map((h) => h.role).filter(Boolean));
+  for (const role of roles) {
+    addHostAliasByRoles(
+      aliases,
+      seen,
+      allHosts,
+      roleAliasName(role),
+      [role],
+      `Hosts with role ${role}`
+    );
   }
 }
 
 function generateAliases(
-  host: NetworkPlanHost,
+  firewallHost: NetworkPlanHost,
   allHosts: NetworkPlanHost[]
 ): PfSenseAlias[] {
   const aliases: PfSenseAlias[] = [];
   const seen = new Set<string>();
 
-  for (const iface of host.interfaces ?? []) {
+  for (const iface of firewallHost.interfaces ?? []) {
     if (!iface.name || !iface.ip || iface.name === "wan") continue;
 
     addAliasOnce(aliases, seen, {
       name: aliasName(iface.name),
       type: "network",
       values: [networkFromCidr(iface.ip)],
-      description: `Network for ${iface.name}`
-    });
-  }
-
-  const wazuhIp = findWazuhIp(allHosts);
-
-  if (wazuhIp) {
-    addAliasOnce(aliases, seen, {
-      name: "WAZUH_SERVER",
-      type: "host",
-      values: [wazuhIp],
-      description: "Wazuh manager, API, dashboard and indexer"
+      description: `Network attached to ${firewallHost.id}/${iface.name}`
     });
   }
 
@@ -228,11 +334,12 @@ function generateAliases(
 
 function addDeploymentRules(
   rules: PfSenseFirewallRule[],
+  seen: Set<string>,
   ifaceName: string,
   sourceAlias: string
 ): void {
   for (const protocol of ["udp", "tcp"] as const) {
-    rules.push({
+    addRuleOnce(rules, seen, {
       interface: ifaceName,
       action: "pass",
       protocol,
@@ -244,7 +351,7 @@ function addDeploymentRules(
   }
 
   for (const port of ["80", "443", "22"]) {
-    rules.push({
+    addRuleOnce(rules, seen, {
       interface: ifaceName,
       action: "pass",
       protocol: "tcp",
@@ -255,7 +362,7 @@ function addDeploymentRules(
     });
   }
 
-  rules.push({
+  addRuleOnce(rules, seen, {
     interface: ifaceName,
     action: "pass",
     protocol: "udp",
@@ -266,43 +373,40 @@ function addDeploymentRules(
   });
 }
 
-function addWazuhRules(
+function addRuleOnEveryNonWanInterface(
   rules: PfSenseFirewallRule[],
-  host: NetworkPlanHost,
-  allHosts: NetworkPlanHost[]
+  seen: Set<string>,
+  firewallHost: NetworkPlanHost,
+  source: string,
+  destination: string,
+  protocol: Protocol,
+  description: string,
+  ports?: string[]
 ): void {
-  const wazuhIp = findWazuhIp(allHosts);
-  const wazuhNetwork = findWazuhNetwork(allHosts);
-
-  if (!wazuhIp || !wazuhNetwork) return;
-
-  for (const iface of host.interfaces ?? []) {
+  for (const iface of firewallHost.interfaces ?? []) {
     if (!iface.name || !iface.ip || iface.name === "wan") continue;
 
-    const sourceNetwork = networkFromCidr(iface.ip);
-    if (sourceNetwork === wazuhNetwork) continue;
-
-    for (const protocol of ["tcp", "udp"] as const) {
-      rules.push({
+    if (protocol === "icmp" || protocol === "any") {
+      addRuleOnce(rules, seen, {
         interface: iface.name,
         action: "pass",
         protocol,
-        source: "any",
-        destination: "WAZUH_SERVER",
-        destinationPort: "1514",
-        description: `Allow traffic entering ${iface.name} to Wazuh ${protocol.toUpperCase()} 1514`
+        source,
+        destination,
+        description: `${description} via ${iface.name}`
       });
+      continue;
     }
 
-    for (const port of ["1515", "55000", "5601", "9200"]) {
-      rules.push({
+    for (const port of ports ?? []) {
+      addRuleOnce(rules, seen, {
         interface: iface.name,
         action: "pass",
-        protocol: "tcp",
-        source: "any",
-        destination: "WAZUH_SERVER",
+        protocol,
+        source,
+        destination,
         destinationPort: port,
-        description: `Allow traffic entering ${iface.name} to Wazuh TCP ${port}`
+        description: `${description} ${protocol.toUpperCase()}/${port} via ${iface.name}`
       });
     }
   }
@@ -310,7 +414,8 @@ function addWazuhRules(
 
 function addRoleToRoleRules(
   rules: PfSenseFirewallRule[],
-  host: NetworkPlanHost,
+  seen: Set<string>,
+  firewallHost: NetworkPlanHost,
   allHosts: NetworkPlanHost[]
 ): void {
   for (const flow of ROLE_FLOWS) {
@@ -325,78 +430,175 @@ function addRoleToRoleRules(
 
       for (const destinationHost of destinations) {
         const destinationIp = firstIp(destinationHost);
-        if (!destinationIp) continue;
-        if (sourceIp === destinationIp) continue;
+        if (!destinationIp || sourceIp === destinationIp) continue;
 
-        for (const iface of host.interfaces ?? []) {
-          if (!iface.name || !iface.ip || iface.name === "wan") continue;
-
-          if (flow.protocol === "icmp" || flow.protocol === "any") {
-            rules.push({
-              interface: iface.name,
-              action: "pass",
-              protocol: flow.protocol,
-              source: sourceIp,
-              destination: destinationIp,
-              description: `${flow.description}: ${sourceHost.id} -> ${destinationHost.id} via ${iface.name}`
-            });
-            continue;
-          }
-
-          for (const port of flow.ports ?? []) {
-            rules.push({
-              interface: iface.name,
-              action: "pass",
-              protocol: flow.protocol,
-              source: sourceIp,
-              destination: destinationIp,
-              destinationPort: port,
-              description: `${flow.description}: ${sourceHost.id} -> ${destinationHost.id} ${flow.protocol.toUpperCase()}/${port} via ${iface.name}`
-            });
-          }
-        }
+        addRuleOnEveryNonWanInterface(
+          rules,
+          seen,
+          firewallHost,
+          sourceIp,
+          destinationIp,
+          flow.protocol,
+          `${flow.description}: ${sourceHost.id} -> ${destinationHost.id}`,
+          flow.ports
+        );
       }
     }
   }
 }
 
-function generateRules(
-  host: NetworkPlanHost,
+function addPfSenseSnmpRules(
+  rules: PfSenseFirewallRule[],
+  seen: Set<string>,
+  firewallHost: NetworkPlanHost,
   allHosts: NetworkPlanHost[]
-): PfSenseFirewallRule[] {
-  const rules: PfSenseFirewallRule[] = [];
+): void {
+  const zabbixHosts = findHostsByRoles(allHosts, ["zabbix_server"]);
+  const zabbixIps = zabbixHosts
+    .map(firstIp)
+    .filter((ip): ip is string => Boolean(ip));
 
-  const interfaces = (host.interfaces ?? []).filter(
+  if (zabbixIps.length === 0) return;
+
+  const interfaces = (firewallHost.interfaces ?? []).filter(
     (iface: any) => iface.name && iface.ip && iface.name !== "wan"
   );
 
-  const interfaceNames = interfaces.map((iface: any) => iface.name);
+  for (const iface of interfaces) {
+    const firewallInterfaceIp = ipOnly(iface.ip);
 
-  const hasDmz = interfaceNames.includes("dmz");
-  const hasTransitData = interfaceNames.includes("transit_data");
-  const hasTransit = interfaceNames.includes("transit");
-  const hasData = interfaceNames.includes("data");
+    for (const zabbixIp of zabbixIps) {
+      addRuleOnce(rules, seen, {
+        interface: iface.name,
+        action: "pass",
+        protocol: "udp",
+        source: zabbixIp,
+        destination: firewallInterfaceIp,
+        destinationPort: "161",
+        description: `Allow Zabbix SNMP polling to ${firewallHost.id}/${iface.name}`
+      });
+
+      addRuleOnce(rules, seen, {
+        interface: iface.name,
+        action: "pass",
+        protocol: "icmp",
+        source: zabbixIp,
+        destination: firewallInterfaceIp,
+        description: `Allow Zabbix ICMP ping to ${firewallHost.id}/${iface.name}`
+      });
+    }
+  }
+}
+
+function addCoreZoneRules(
+  rules: PfSenseFirewallRule[],
+  seen: Set<string>,
+  firewallHost: NetworkPlanHost
+): void {
+  const interfaces = (firewallHost.interfaces ?? []).filter(
+    (iface: any) => iface.name && iface.ip && iface.name !== "wan"
+  );
 
   for (const iface of interfaces) {
-    addDeploymentRules(rules, iface.name, aliasName(iface.name));
+    addDeploymentRules(rules, seen, iface.name, aliasName(iface.name));
+
+    addRuleOnce(rules, seen, {
+      interface: iface.name,
+      action: "pass",
+      protocol: "icmp",
+      source: aliasName(iface.name),
+      destination: "any",
+      description: `Allow ICMP from ${aliasName(iface.name)}`
+    });
   }
 
-  addWazuhRules(rules, host, allHosts);
-  addRoleToRoleRules(rules, host, allHosts);
+  /*
+   * Transit interfaces are router-to-router links.
+   * They must accept routed traffic carrying original source IPs
+   * from remote zones, otherwise SOC->DATA and DATA->SOC flows die.
+   */
+  for (const iface of interfaces) {
+    if (!iface.name.startsWith("transit")) continue;
 
-  if (hasDmz && hasTransitData) {
-    rules.push({
-      interface: "dmz",
-      action: "block",
+    addRuleOnce(rules, seen, {
+      interface: iface.name,
+      action: "pass",
       protocol: "any",
-      source: "DMZ_NET",
-      destination: "DATA_NET",
-      description: "Block DMZ to DATA"
+      source: "any",
+      destination: "any",
+      description: `Allow routed traffic on ${firewallHost.id}/${iface.name}`
+    });
+  }
+
+  const hasDmz = interfaces.some((iface: any) => iface.name === "dmz");
+  const hasData = interfaces.some((iface: any) => iface.name === "data");
+  const hasSoc = interfaces.some((iface: any) => iface.name === "soc");
+  const hasManagement = interfaces.some((iface: any) => iface.name === "management");
+
+  if (hasSoc) {
+    addRuleOnce(rules, seen, {
+      interface: "soc",
+      action: "pass",
+      protocol: "tcp",
+      source: "SOC_NET",
+      destination: "OPENCTI_SERVER",
+      destinationPort: "8080",
+      description: "Allow SOC access to OpenCTI web UI"
+    });
+
+    addRuleOnce(rules, seen, {
+      interface: "soc",
+      action: "pass",
+      protocol: "tcp",
+      source: "SOC_NET",
+      destination: "OPENCTI_SERVER",
+      destinationPort: "443",
+      description: "Allow SOC HTTPS access to OpenCTI"
+    });
+  }
+
+  if (hasManagement) {
+    addRuleOnce(rules, seen, {
+      interface: "management",
+      action: "pass",
+      protocol: "any",
+      source: "MANAGEMENT_NET",
+      destination: "any",
+      description: "Allow MANAGEMENT outbound and administration"
+    });
+
+    addRuleOnce(rules, seen, {
+      interface: "management",
+      action: "pass",
+      protocol: "tcp",
+      source: "MANAGEMENT_NET",
+      destination: "OPENCTI_SERVER",
+      destinationPort: "8080",
+      description: "Allow MANAGEMENT access to OpenCTI web UI"
+    });
+
+    addRuleOnce(rules, seen, {
+      interface: "management",
+      action: "pass",
+      protocol: "tcp",
+      source: "MANAGEMENT_NET",
+      destination: "OPENCTI_SERVER",
+      destinationPort: "443",
+      description: "Allow MANAGEMENT HTTPS access to OpenCTI"
     });
   }
 
   if (hasDmz) {
-    rules.push({
+    addRuleOnce(rules, seen, {
+      interface: "dmz",
+      action: "block",
+      protocol: "any",
+      source: "DMZ_NET",
+      destination: "MARIADB_SERVER",
+      description: "Block DMZ direct access to MariaDB"
+    });
+
+    addRuleOnce(rules, seen, {
       interface: "dmz",
       action: "pass",
       protocol: "tcp",
@@ -405,7 +607,7 @@ function generateRules(
       description: "Allow DMZ TCP outbound"
     });
 
-    rules.push({
+    addRuleOnce(rules, seen, {
       interface: "dmz",
       action: "pass",
       protocol: "udp",
@@ -416,58 +618,64 @@ function generateRules(
     });
   }
 
-  if (hasTransitData) {
-    rules.push({
-      interface: "transit_data",
-      action: "pass",
-      protocol: "any",
-      source: "TRANSIT_DATA_NET",
-      destination: "DATA_NET",
-      description: "Allow EDGE transit to DATA firewall"
-    });
-  }
-
-  if (hasTransit && hasData) {
-    rules.push({
-      interface: "transit",
-      action: "pass",
-      protocol: "any",
-      source: "TRANSIT_NET",
-      destination: "DATA_NET",
-      description: "Allow transit to DATA"
-    });
-  }
-
-  if (interfaceNames.includes("management")) {
-    rules.push({
-      interface: "management",
+  /*
+   * Do not add a broad DATA_NET -> any block here.
+   * pfSense evaluates rules top-down, but keeping a hard block in the
+   * generated plan made debugging painful and broke monitoring flows
+   * whenever the XML builder reordered rules.
+   */
+  if (hasData) {
+    addRuleOnce(rules, seen, {
+      interface: "data",
       action: "pass",
       protocol: "icmp",
-      source: "MANAGEMENT_NET",
-      destination: "any",
-      description: "Allow MANAGEMENT ICMP"
-    });
-
-    rules.push({
-      interface: "management",
-      action: "pass",
-      protocol: "any",
-      source: "MANAGEMENT_NET",
-      destination: "any",
-      description: "Allow MANAGEMENT outbound"
-    });
-  }
-
-  if (hasData) {
-    rules.push({
-      interface: "data",
-      action: "block",
-      protocol: "any",
       source: "DATA_NET",
-      destination: "any",
-      description: "Block DATA outbound by default"
+      destination: "ZABBIX_SERVER",
+      description: "Allow DATA ICMP to Zabbix for diagnostics"
+    });
+
+    addRuleOnce(rules, seen, {
+      interface: "data",
+      action: "pass",
+      protocol: "tcp",
+      source: "DATA_NET",
+      destination: "ZABBIX_SERVER",
+      destinationPort: "10051",
+      description: "Allow DATA Zabbix agents active checks"
+    });
+
+    addRuleOnce(rules, seen, {
+      interface: "data",
+      action: "pass",
+      protocol: "tcp",
+      source: "DATA_NET",
+      destination: "WAZUH_SERVER",
+      destinationPort: "1514",
+      description: "Allow DATA Wazuh agent events"
+    });
+
+    addRuleOnce(rules, seen, {
+      interface: "data",
+      action: "pass",
+      protocol: "tcp",
+      source: "DATA_NET",
+      destination: "WAZUH_SERVER",
+      destinationPort: "1515",
+      description: "Allow DATA Wazuh agent enrollment"
     });
   }
+}
+
+function generateRules(
+  firewallHost: NetworkPlanHost,
+  allHosts: NetworkPlanHost[]
+): PfSenseFirewallRule[] {
+  const rules: PfSenseFirewallRule[] = [];
+  const seen = new Set<string>();
+
+  addCoreZoneRules(rules, seen, firewallHost);
+  addPfSenseSnmpRules(rules, seen, firewallHost, allHosts);
+  addRoleToRoleRules(rules, seen, firewallHost, allHosts);
 
   return rules;
 }
@@ -526,12 +734,12 @@ export function generatePfSenseMinimalPlan(
 
   const plans: PfSensePlan[] = [];
 
-  for (const host of firewallHosts) {
+  for (const firewallHost of firewallHosts) {
     plans.push({
-      firewall: host.id,
-      aliases: generateAliases(host, networkPlan.hosts),
-      rules: generateRules(host, networkPlan.hosts),
-      nat: generateNat(host, networkPlan.hosts)
+      firewall: firewallHost.id,
+      aliases: generateAliases(firewallHost, networkPlan.hosts),
+      rules: generateRules(firewallHost, networkPlan.hosts),
+      nat: generateNat(firewallHost, networkPlan.hosts)
     });
   }
 

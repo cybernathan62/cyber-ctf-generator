@@ -5,6 +5,7 @@ export type RoleType =
   | "reverse_proxy"
   | "wazuh_server"
   | "zabbix_server"
+  | "opencti_server"
   | "soc_ai_agent"
   | "ids_sensor"
   | "db_server"

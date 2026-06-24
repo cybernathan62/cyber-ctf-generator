@@ -37,7 +37,6 @@ function runSsh(target: SshAccessEntry, script: string, label: string): void {
 
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
-
   if (result.error) throw result.error;
 
   if (result.status !== 0) {
@@ -107,12 +106,20 @@ sudo chmod 750 /var/log/suricata || true
 echo "[Suricata] Mise à jour des règles Emerging Threats..."
 
 set +e
-timeout 180 sudo suricata-update
+timeout 300 sudo suricata-update
 SURICATA_UPDATE_CODE=$?
 set -e
 
 if [ "$SURICATA_UPDATE_CODE" -ne 0 ]; then
-  echo "[Suricata] WARNING: suricata-update KO ou timeout, création fichier fallback"
+  echo "[Suricata] WARNING: suricata-update KO ou timeout, deuxième tentative courte..."
+  set +e
+  timeout 180 sudo suricata-update
+  SURICATA_UPDATE_CODE=$?
+  set -e
+fi
+
+if [ "$SURICATA_UPDATE_CODE" -ne 0 ]; then
+  echo "[Suricata] WARNING: téléchargement des règles KO, création fichier fallback vide"
   sudo touch /var/lib/suricata/rules/suricata.rules
 fi
 
@@ -219,10 +226,13 @@ echo "[Suricata] Démarrage service..."
 
 sudo systemctl stop suricata || true
 sudo rm -f /run/suricata.pid
+sudo rm -f /var/run/suricata-command.socket || true
 
 sudo systemctl daemon-reload
 sudo systemctl reset-failed suricata || true
 sudo systemctl enable suricata || true
+
+RESTART_TS="$(date '+%Y-%m-%d %H:%M:%S')"
 sudo systemctl restart suricata
 
 sleep 5
@@ -230,11 +240,46 @@ sleep 5
 if ! sudo systemctl is-active --quiet suricata; then
   echo "[Suricata] ERREUR: service Suricata non actif"
   sudo systemctl --no-pager --full status suricata || true
-  sudo journalctl -u suricata --no-pager -n 120 || true
+  sudo journalctl -u suricata --since "$RESTART_TS" --no-pager || true
   exit 1
 fi
 
-sudo systemctl --no-pager --full status suricata || true
+echo "[Suricata] Service actif"
+
+echo "[Suricata] Attente socket Suricata..."
+
+SOCKET_OK=0
+
+for i in $(seq 1 30); do
+  if sudo test -S /var/run/suricata-command.socket; then
+    echo "[Suricata] Socket présent, test suricatasc..."
+    set +e
+    sudo suricatasc -c uptime >/tmp/suricata_uptime.json 2>/tmp/suricata_uptime.err
+    SURICATASC_CODE=$?
+    set -e
+
+    if [ "$SURICATASC_CODE" -eq 0 ]; then
+      echo "[Suricata] Socket OK"
+      cat /tmp/suricata_uptime.json || true
+      SOCKET_OK=1
+      break
+    fi
+
+    echo "[Suricata] Socket présent mais pas encore prêt, tentative $i/30..."
+    cat /tmp/suricata_uptime.err || true
+  else
+    echo "[Suricata] Socket non présent, tentative $i/30..."
+  fi
+
+  sleep 2
+done
+
+if [ "$SOCKET_OK" -ne 1 ]; then
+  echo "[Suricata] WARNING: socket Suricata non joignable après attente."
+  echo "[Suricata] Le service est actif, le déploiement continue."
+  sudo ls -l /var/run/suricata* || true
+  sudo journalctl -u suricata --since "$RESTART_TS" --no-pager | tail -80 || true
+fi
 
 test -f /var/log/suricata/eve.json || sudo touch /var/log/suricata/eve.json
 sudo chmod 640 /var/log/suricata/eve.json || true
@@ -286,6 +331,7 @@ PY
     exit 1
   }
 
+  echo "[Suricata] Wazuh agent actif"
   sudo tail -n 50 /var/ossec/logs/ossec.log | grep -iE "suricata|eve|localfile|error" || true
 else
   echo "[Suricata] WARNING: Wazuh agent absent, skip intégration eve.json."
@@ -300,10 +346,10 @@ sudo grep '"event_type":"alert"' /var/log/suricata/eve.json | tail -5
 set -e
 
 echo "[Suricata] Validation fichiers..."
-ls -l /var/log/suricata || true
+sudo ls -l /var/log/suricata || true
 sudo tail -n 5 /var/log/suricata/eve.json || true
 
-echo "[Suricata] OK"
+echo "[Suricata] OK - service actif, règles présentes"
 exit 0
 `;
 

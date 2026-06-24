@@ -22,6 +22,14 @@ function hasAny(text: string, values: string[]): boolean {
   return values.some((value) => text.includes(value));
 }
 
+function hasRole(
+  roles: RequestedRole[],
+  role: RoleType,
+  zone?: ZoneType
+): boolean {
+  return roles.some((r) => r.role === role && (!zone || r.zone === zone));
+}
+
 function pushRole(
   roles: RequestedRole[],
   role: RoleType,
@@ -39,37 +47,125 @@ function pushRole(
   });
 }
 
+function pushRoleOnce(
+  roles: RequestedRole[],
+  role: RoleType,
+  variant: RoleVariant,
+  zone: ZoneType,
+  count = 1,
+  nodeCount = 1
+): void {
+  if (hasRole(roles, role, zone)) return;
+  pushRole(roles, role, variant, zone, count, nodeCount);
+}
+
+function ensureEdgeFirewall(roles: RequestedRole[]): void {
+  pushRoleOnce(roles, "edge_firewall", "simple", "edge");
+}
+
+function ensureSocFirewall(roles: RequestedRole[]): void {
+  pushRoleOnce(roles, "internal_firewall", "simple", "soc");
+}
+
+function ensureDataFirewall(roles: RequestedRole[]): void {
+  pushRoleOnce(roles, "internal_firewall", "simple", "data");
+}
+
 function detectRolesFromPrompt(input: string): RequestedRole[] {
-  const text = input.toLowerCase();
+  const text = ` ${input.toLowerCase()} `;
   const roles: RequestedRole[] = [];
 
   if (hasAny(text, ["firewall", "pfsense", "edge", "pfsense edge"])) {
-    pushRole(roles, "edge_firewall", "simple", "edge");
+    ensureEdgeFirewall(roles);
+  }
+
+  if (
+    hasAny(text, [
+      "pfsense interne soc",
+      "firewall interne soc",
+      "pare-feu interne soc",
+      "pfsense soc",
+      "firewall soc"
+    ])
+  ) {
+    ensureSocFirewall(roles);
+  }
+
+  if (
+    hasAny(text, [
+      "pfsense interne data",
+      "firewall interne data",
+      "pare-feu interne data",
+      "pfsense data",
+      "firewall data"
+    ])
+  ) {
+    ensureDataFirewall(roles);
   }
 
   if (text.includes("bastion")) {
-    pushRole(roles, "bastion", "simple", "management");
+    pushRoleOnce(roles, "bastion", "simple", "management");
   }
 
   if (hasAny(text, ["dmz", "reverse proxy", "reverse_proxy", "proxy", "web"])) {
-    pushRole(roles, "reverse_proxy", "simple", "dmz");
+    pushRoleOnce(roles, "reverse_proxy", "simple", "dmz");
   }
 
-  if (hasAny(text, [" db ", "database", "base de données", "base de donnees"])) {
-    pushRole(roles, "db_server", "simple", "data");
+  if (
+    hasAny(text, [
+      " db ",
+      "database",
+      "base de données",
+      "base de donnees",
+      "mariadb",
+      "mysql"
+    ])
+  ) {
+    ensureDataFirewall(roles);
+    pushRoleOnce(roles, "db_server", "simple", "data");
   }
 
   if (text.includes("wazuh")) {
-    pushRole(roles, "internal_firewall", "simple", "soc");
-    pushRole(roles, "wazuh_server", "simple", "soc");
+    ensureSocFirewall(roles);
+    pushRoleOnce(roles, "wazuh_server", "simple", "soc");
   }
 
   if (text.includes("zabbix")) {
-    pushRole(roles, "zabbix_server", "simple", "soc");
+    ensureSocFirewall(roles);
+    pushRoleOnce(roles, "zabbix_server", "simple", "soc");
+  }
+
+  if (
+    hasAny(text, [
+      "opencti",
+      "open_cti",
+      "open-cti",
+      "open cti",
+      "cti",
+      "threat intelligence",
+      "cyber threat intelligence"
+    ])
+  ) {
+    ensureSocFirewall(roles);
+    pushRoleOnce(roles, "opencti_server", "simple", "soc");
   }
 
   if (hasAny(text, ["soc-ai", "soc ai", "agent ia", "ia soc", "ai soc"])) {
-    pushRole(roles, "soc_ai_agent", "simple", "soc");
+    ensureSocFirewall(roles);
+    pushRoleOnce(roles, "soc_ai_agent", "simple", "soc");
+  }
+
+  if (
+    hasAny(text, [
+      "suricata",
+      "ids",
+      "ids sensor",
+      "sonde ids",
+      "sonde suricata"
+    ])
+  ) {
+    ensureSocFirewall(roles);
+    pushRoleOnce(roles, "ids_sensor", "simple", "soc");
   }
 
   return roles;

@@ -13,6 +13,8 @@ import { patchLiveSuricataSensor } from "./suricataLivePatcher.js";
 import { patchLiveMariaDB } from "./mariadbLivePatcher.js";
 import { patchLiveZabbix } from "./zabbixLivePatcher.js";
 import { patchLiveZabbixAgents } from "./zabbixAgentLivePatcher.js";
+import { patchLiveZabbixPfSense } from "./zabbixPfsensePatcher.js";
+import { patchLiveOpenCTI } from "./openctiLivePatcher.js";
 import { validateLabWithPolicies } from "./policyEngine.js";
 import {
   LabDefinition,
@@ -113,6 +115,10 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
     "soc",
     "wazuh",
     "zabbix",
+    "opencti",
+    "open cti",
+    "threat intelligence",
+    "cti",
     "supervision",
     "suricata",
     "ids",
@@ -137,14 +143,22 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
   ]);
 
   const wantsSocFirewall = hasAny(text, [
-    "pfsense interne soc",
-    "firewall interne soc",
-    "firewall soc",
-    "pfsense soc",
-    "pfsense interne avec wazuh",
-    "pfsense interne avec suricata",
-    "pfsense interne avec supervision"
-  ]);
+  "pfsense interne",
+  "firewall interne",
+  "pare-feu interne",
+  "pfsense interne soc",
+  "firewall interne soc",
+  "firewall soc",
+  "pfsense soc",
+  "pfsense interne avec wazuh",
+  "pfsense interne avec zabbix",
+  "pfsense interne avec opencti",
+  "pfsense interne avec open cti",
+  "pfsense interne avec open_cti",
+  "pfsense interne avec cti",
+  "pfsense interne avec suricata",
+  "pfsense interne avec supervision"
+]);
 
   const wantsDataFirewall = hasAny(text, [
     "pfsense data",
@@ -200,6 +214,22 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
 
   if (text.includes("zabbix")) {
     pushRoleOnce(roles, "zabbix_server", "simple", "soc", 1, 1);
+  }
+
+  if (
+    hasAny(text, [
+      "opencti",
+      "open cti",
+      "threat intelligence",
+      "threat intel",
+      "cti",
+      "plateforme cti",
+      "renseignement sur les menaces",
+      "renseignement menace",
+      "ioc"
+    ])
+  ) {
+    pushRoleOnce(roles, "opencti_server", "simple", "soc", 1, 1);
   }
 
   if (hasAny(text, ["soc ai", "agent ia", "ia soc", "ai soc", "agent soc"])) {
@@ -290,6 +320,7 @@ function waitForDebianSsh(generatedLabDir: string): void {
     "db-server",
     "wazuh-1",
     "zabbix-1",
+    "opencti-1",
     "soc-ai-1",
     "ids-sensor-1-1"
   ];
@@ -462,7 +493,7 @@ function main(): void {
     console.log("[infra] Aucun serveur MariaDB déployé, skip.");
   }
 
-    if (vagrantExists("zabbix-1", generatedLabDir)) {
+  if (vagrantExists("zabbix-1", generatedLabDir)) {
     waitForVmSsh("zabbix-1", generatedLabDir, 900);
     patchLiveZabbix(outputRoot);
 
@@ -471,6 +502,23 @@ function main(): void {
     patchLiveZabbixAgents(outputRoot);
   } else {
     console.log("[infra] Aucun Zabbix déployé, skip.");
+  }
+
+  if (vagrantExists("opencti-1", generatedLabDir)) {
+    waitForVmSsh("opencti-1", generatedLabDir, 1800);
+
+    try {
+      patchLiveOpenCTI(outputRoot);
+
+      waitSeconds(30);
+
+      console.log("[infra] OpenCTI configuré.");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[infra] OpenCTI non appliqué: ${message}`);
+    }
+  } else {
+    console.log("[infra] Aucun OpenCTI déployé, skip.");
   }
 
   if (vagrantExists("soc-ai-1", generatedLabDir)) {
@@ -498,7 +546,18 @@ function main(): void {
     console.log("[infra] Aucun IDS Suricata déployé, skip.");
   }
 
-  console.log("\nInfra complète déployée : pfSense + Debian + Wazuh + agents + MariaDB + Zabbix + SOC AI/IDS si demandés.");
+  if (vagrantExists("zabbix-1", generatedLabDir)) {
+    try {
+      patchLiveZabbixPfSense(outputRoot);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[infra] Zabbix pfSense non appliqué: ${message}`);
+    }
+  } else {
+    console.log("[infra] Aucun Zabbix déployé, skip pfSense dans Zabbix.");
+  }
+
+  console.log("\nInfra complète déployée : pfSense + Debian + Wazuh + agents + MariaDB + Zabbix + OpenCTI + SOC AI/IDS si demandés.");
 }
 
 main();

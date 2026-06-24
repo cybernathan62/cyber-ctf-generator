@@ -174,6 +174,9 @@ export class LabGeneratorService {
       case "zabbix_server":
         return totalNodes > 1 ? `zabbix-${nodeIndex}` : "zabbix-1";
 
+      case "opencti_server":
+        return totalNodes > 1 ? `opencti-${nodeIndex}` : "opencti-1";
+
       case "soc_ai_agent":
         return totalNodes > 1 ? `soc-ai-${nodeIndex}` : "soc-ai-1";
       
@@ -237,11 +240,13 @@ export class LabGeneratorService {
 
   private resolveCpu(vm: GeneratedInstance): number {
     if (vm.role === "wazuh_server") return 4;
+    if (vm.role === "opencti_server") return 4;
     return 2;
   }
 
   private resolveMemory(vm: GeneratedInstance): number {
     if (vm.role === "wazuh_server") return 4096;
+    if (vm.role === "opencti_server") return 8192;
     return 2048;
   }
 
@@ -333,6 +338,12 @@ export class LabGeneratorService {
       );
     }
 
+    if (vm.role === "opencti_server" && ports.gui) {
+      lines.push(
+        `    ${ref}.vm.network "forwarded_port", guest: 8080, host: ${ports.gui}, host_ip: "127.0.0.1", auto_correct: true, id: "${vm.id}_web"`
+      );
+    }
+
     return lines.join("\n");
   }
 
@@ -343,6 +354,7 @@ export class LabGeneratorService {
     let internalPfSenseIndex = 0;
     let debianIndex = 0;
     let wazuhDashboardIndex = 0;
+    let openctiWebIndex = 0;
 
     for (const vm of instances) {
       if (this.isEdgePfSense(vm)) {
@@ -364,13 +376,24 @@ export class LabGeneratorService {
       }
 
       if (!this.isPfSense(vm)) {
+        const gui =
+          vm.role === "wazuh_server"
+            ? 9443 + wazuhDashboardIndex
+            : vm.role === "opencti_server"
+              ? 9080 + openctiWebIndex
+              : undefined;
+
         allocations.set(vm.id, {
           ssh: 2401 + debianIndex,
-          gui: vm.role === "wazuh_server" ? 9443 + wazuhDashboardIndex : undefined
+          gui
         });
 
         if (vm.role === "wazuh_server") {
           wazuhDashboardIndex += 1;
+        }
+
+        if (vm.role === "opencti_server") {
+          openctiWebIndex += 1;
         }
 
         debianIndex += 1;
