@@ -64,9 +64,7 @@ function loadPolicyDirectory(rootDir: string): void {
       const fullPath = path.join(currentDir, entry);
       const stat = fs.lstatSync(fullPath);
 
-      if (stat.isSymbolicLink()) {
-        continue;
-      }
+      if (stat.isSymbolicLink()) continue;
 
       if (stat.isDirectory()) {
         walk(fullPath);
@@ -335,37 +333,48 @@ export function validateLabWithPolicies(
     });
   }
 
-  const hasDataFirewall =
-  requestedInternalFirewalls.some((fw) => fw.zone === "data") ||
-  internalFirewallInstances.some((fw) => fw.zone === "data");
+  if (hasRole(lab, "opencti_server")) {
+    exposureHints.push({
+      code: "OPENCTI_UI_EDGE_ADMIN_ONLY",
+      message:
+        "L’accès OpenCTI doit passer par EDGE puis par une règle contrôlée. Éviter toute exposition large depuis WAN.",
+      serviceRole: "opencti_server",
+      mustUseEdge: true
+    });
+  }
 
-if (hasRole(lab, "db_server") && !hasDataFirewall) {
-  pushError(
-    violations,
-    "DATA_FIREWALL_REQUIRED",
-    "Un db_server nécessite un internal_firewall en zone data."
-  );
-}
+  const hasDataFirewall =
+    requestedInternalFirewalls.some((fw) => fw.zone === "data") ||
+    internalFirewallInstances.some((fw) => fw.zone === "data");
+
+  if (hasRole(lab, "db_server") && !hasDataFirewall) {
+    pushError(
+      violations,
+      "DATA_FIREWALL_REQUIRED",
+      "Un db_server nécessite un internal_firewall en zone data."
+    );
+  }
 
   const hasSocFirewall =
-  requestedInternalFirewalls.some((fw) => fw.zone === "soc") ||
-  internalFirewallInstances.some((fw) => fw.zone === "soc");
+    requestedInternalFirewalls.some((fw) => fw.zone === "soc") ||
+    internalFirewallInstances.some((fw) => fw.zone === "soc");
 
-if (
-  (
-    hasRole(lab, "wazuh_server") ||
-    hasRole(lab, "zabbix_server") ||
-    hasRole(lab, "soc_ai_agent") ||
-    hasRole(lab, "ids_sensor")
-  ) &&
-  !hasSocFirewall
-) {
-  pushError(
-    violations,
-    "SOC_FIREWALL_REQUIRED",
-    "Les services SOC nécessitent un internal_firewall en zone soc."
-  );
-}
+  if (
+    (
+      hasRole(lab, "wazuh_server") ||
+      hasRole(lab, "zabbix_server") ||
+      hasRole(lab, "opencti_server") ||
+      hasRole(lab, "soc_ai_agent") ||
+      hasRole(lab, "ids_sensor")
+    ) &&
+    !hasSocFirewall
+  ) {
+    pushError(
+      violations,
+      "SOC_FIREWALL_REQUIRED",
+      "Les services SOC nécessitent un internal_firewall en zone soc."
+    );
+  }
 
   return {
     allowed: violations.length === 0,

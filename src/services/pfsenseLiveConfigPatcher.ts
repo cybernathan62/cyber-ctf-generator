@@ -447,6 +447,82 @@ function renderAntiLockoutRule(pfsenseInterface: string): string {
 \t\t</rule>`;
 }
 
+function generateSnmpd(): string {
+  return `\t<snmpd>
+\t\t<enable></enable>
+\t\t<pollport>161</pollport>
+\t\t<syslocation><![CDATA[SOC-LAB]]></syslocation>
+\t\t<syscontact><![CDATA[admin@soc-lab.local]]></syscontact>
+\t\t<rocommunity><![CDATA[public]]></rocommunity>
+\t\t<trapenable>0</trapenable>
+\t\t<trapserver></trapserver>
+\t\t<trapserverport>162</trapserverport>
+\t\t<trapstring></trapstring>
+\t\t<modules>
+\t\t\t<mibii></mibii>
+\t\t\t<netgraph></netgraph>
+\t\t\t<pf></pf>
+\t\t\t<hostres></hostres>
+\t\t</modules>
+\t</snmpd>`;
+}
+
+function patchSnmpd(xml: string): string {
+  const snmpd = generateSnmpd();
+
+  if (/<snmpd>[\s\S]*?<\/snmpd>/m.test(xml)) {
+    return xml.replace(/<snmpd>[\s\S]*?<\/snmpd>/m, snmpd);
+  }
+
+  if (/<\/pfsense>/m.test(xml)) {
+    return xml.replace(/<\/pfsense>/m, `${snmpd}\n</pfsense>`);
+  }
+
+  throw new Error("[pfSense patch] Impossible d'ajouter <snmpd>: balise </pfsense> introuvable");
+}
+
+function renderSnmpRule(
+  pfsenseInterface: string,
+  destinationIp: string,
+  description: string
+): string {
+  return `
+\t\t<rule>
+\t\t\t<type>pass</type>
+\t\t\t<interface>${pfsenseInterface}</interface>
+\t\t\t<ipprotocol>inet</ipprotocol>
+\t\t\t<protocol>udp</protocol>
+\t\t\t<statetype><![CDATA[keep state]]></statetype>
+\t\t\t<source><any></any></source>
+\t\t\t<destination>
+\t\t\t\t<address>${destinationIp}</address>
+\t\t\t\t<port>161</port>
+\t\t\t</destination>
+\t\t\t<descr><![CDATA[${description}]]></descr>
+\t\t</rule>`;
+}
+
+function generateSnmpFirewallRules(host: NetworkPlanHost): string {
+  const interfaceMap = buildLogicalToPfSenseInterfaceMap(host);
+  let body = "";
+
+  for (const iface of host.interfaces as any[]) {
+    if (iface.name === "wan" || iface.mode === "dhcp" || !iface.ip) continue;
+
+    const pfsenseInterface = interfaceMap.get(iface.name);
+    if (!pfsenseInterface) continue;
+
+    body += renderSnmpRule(
+      pfsenseInterface,
+      ipOnly(iface.ip),
+      `Allow SNMP monitoring to ${host.id} on ${iface.name}`
+    );
+  }
+
+  return body;
+}
+
+
 function generateFilter(host: NetworkPlanHost, pfsensePlan: PfSensePlan): string {
   const interfaceMap = buildLogicalToPfSenseInterfaceMap(host);
 
@@ -455,11 +531,13 @@ function generateFilter(host: NetworkPlanHost, pfsensePlan: PfSensePlan): string
       ? renderAntiLockoutRule(interfaceMap.get("management")!)
       : "";
 
+  const snmpRules = generateSnmpFirewallRules(host);
+
   const rules = pfsensePlan.rules
     .map((rule) => renderFirewallRule(rule, interfaceMap))
     .join("");
 
-  return `\t<filter>${antiLockout}${rules}
+  return `\t<filter>${antiLockout}${snmpRules}${rules}
 \t</filter>`;
 }
 
@@ -517,6 +595,7 @@ export function buildPatchedConfigXml(
   xml = replaceTag(xml, "staticroutes", generateStaticRoutes(host));
   xml = replaceTag(xml, "nat", generateNat(host, pfsensePlan));
   xml = replaceTag(xml, "aliases", generateAliases(pfsensePlan));
+  xml = patchSnmpd(xml);
   xml = replaceTag(xml, "filter", generateFilter(host, pfsensePlan));
 
   return xml;

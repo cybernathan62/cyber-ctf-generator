@@ -60,7 +60,19 @@ export function generateNetworkPlanFromDefinition(
 
   const wantsEdge = Boolean(edgeRole);
   const wantsIdsSensor = roles.some((r) => r.role === "ids_sensor");
-  const wantsSoc = Boolean(socFwRole) || roles.some((r) => r.zone === "soc");
+  const wantsOpenCti = roles.some((r) => r.role === "opencti_server");
+
+  const socRoles = new Set([
+    "wazuh_server",
+    "zabbix_server",
+    "soc_ai_agent",
+    "ids_sensor",
+    "opencti_server"
+  ]);
+
+  const wantsSoc =
+    Boolean(socFwRole) ||
+    roles.some((r) => r.zone === "soc" || socRoles.has(r.role));
   const wantsData = Boolean(dataFwRole) || roles.some((r) => r.zone === "data");
   const wantsDmz = roles.some((r) => r.role === "reverse_proxy");
   const wantsBastion = roles.some((r) => r.role === "bastion");
@@ -377,6 +389,27 @@ export function generateNetworkPlanFromDefinition(
     hosts.push({
       id: "zabbix-1",
       role: "zabbix_server",
+      variant: "simple",
+      zone: "soc",
+      profile: "debian-wazuh",
+      interfaces: [
+        {
+          name: "eth1",
+          network_id: "soc-net",
+          ip: ip(labId, socVlan, randomHost(usedSocHosts), 24),
+          gateway: socGw,
+          dns: ["1.1.1.1", "8.8.8.8"]
+        }
+      ]
+    });
+  }
+
+  const openCtiRole = roles.find((r) => r.role === "opencti_server");
+
+  if (openCtiRole && socVlan !== null && socGw) {
+    hosts.push({
+      id: "opencti-1",
+      role: "opencti_server",
       variant: "simple",
       zone: "soc",
       profile: "debian-wazuh",

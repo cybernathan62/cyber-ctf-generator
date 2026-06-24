@@ -22,6 +22,8 @@ const DB_ROLES = ["db_server", "database", "mariadb_server", "mysql_server"];
 
 const FIREWALL_ROLES = ["edge_firewall", "internal_firewall"];
 
+const OPENCTI_ROLES = ["opencti_server"];
+
 const WAZUH_AGENT_ROLES = [
   "bastion",
   "reverse_proxy",
@@ -31,11 +33,13 @@ const WAZUH_AGENT_ROLES = [
   "mysql_server",
   "ids_sensor",
   "soc_ai_agent",
-  "zabbix_server"
+  "zabbix_server",
+  "opencti_server"
 ];
 
 const ZABBIX_AGENT_ROLES = [
   "bastion",
+  "opencti_server",
   "reverse_proxy",
   "db_server",
   "database",
@@ -106,6 +110,39 @@ const ROLE_FLOWS: RoleFlow[] = [
     toRoles: ["zabbix_server"],
     protocol: "icmp",
     description: "Allow Zabbix ICMP diagnostic"
+  },
+  {
+    fromRoles: ["wazuh_server"],
+    toRoles: OPENCTI_ROLES,
+    protocol: "tcp",
+    ports: ["8080", "443"],
+    description: "Allow Wazuh to communicate with OpenCTI"
+  },
+  {
+    fromRoles: ["zabbix_server"],
+    toRoles: OPENCTI_ROLES,
+    protocol: "tcp",
+    ports: ["8080", "443"],
+    description: "Allow Zabbix to communicate with OpenCTI"
+  },
+  {
+    fromRoles: ["bastion"],
+    toRoles: OPENCTI_ROLES,
+    protocol: "tcp",
+    ports: ["8080", "443", "22"],
+    description: "Allow Bastion administration of OpenCTI"
+  },
+  {
+    fromRoles: OPENCTI_ROLES,
+    toRoles: ["wazuh_server"],
+    protocol: "icmp",
+    description: "Allow OpenCTI ICMP diagnostic to Wazuh"
+  },
+  {
+    fromRoles: OPENCTI_ROLES,
+    toRoles: ["zabbix_server"],
+    protocol: "icmp",
+    description: "Allow OpenCTI ICMP diagnostic to Zabbix"
   },
   {
     fromRoles: ["bastion"],
@@ -221,6 +258,15 @@ function addServiceAliases(
     "ZABBIX_SERVER",
     ["zabbix_server"],
     "Zabbix server"
+  );
+
+  addHostAliasByRoles(
+    aliases,
+    seen,
+    allHosts,
+    "OPENCTI_SERVER",
+    OPENCTI_ROLES,
+    "OpenCTI server"
   );
 
   addHostAliasByRoles(
@@ -401,6 +447,49 @@ function addRoleToRoleRules(
   }
 }
 
+function addPfSenseSnmpRules(
+  rules: PfSenseFirewallRule[],
+  seen: Set<string>,
+  firewallHost: NetworkPlanHost,
+  allHosts: NetworkPlanHost[]
+): void {
+  const zabbixHosts = findHostsByRoles(allHosts, ["zabbix_server"]);
+  const zabbixIps = zabbixHosts
+    .map(firstIp)
+    .filter((ip): ip is string => Boolean(ip));
+
+  if (zabbixIps.length === 0) return;
+
+  const interfaces = (firewallHost.interfaces ?? []).filter(
+    (iface: any) => iface.name && iface.ip && iface.name !== "wan"
+  );
+
+  for (const iface of interfaces) {
+    const firewallInterfaceIp = ipOnly(iface.ip);
+
+    for (const zabbixIp of zabbixIps) {
+      addRuleOnce(rules, seen, {
+        interface: iface.name,
+        action: "pass",
+        protocol: "udp",
+        source: zabbixIp,
+        destination: firewallInterfaceIp,
+        destinationPort: "161",
+        description: `Allow Zabbix SNMP polling to ${firewallHost.id}/${iface.name}`
+      });
+
+      addRuleOnce(rules, seen, {
+        interface: iface.name,
+        action: "pass",
+        protocol: "icmp",
+        source: zabbixIp,
+        destination: firewallInterfaceIp,
+        description: `Allow Zabbix ICMP ping to ${firewallHost.id}/${iface.name}`
+      });
+    }
+  }
+}
+
 function addCoreZoneRules(
   rules: PfSenseFirewallRule[],
   seen: Set<string>,
@@ -443,7 +532,30 @@ function addCoreZoneRules(
 
   const hasDmz = interfaces.some((iface: any) => iface.name === "dmz");
   const hasData = interfaces.some((iface: any) => iface.name === "data");
+  const hasSoc = interfaces.some((iface: any) => iface.name === "soc");
   const hasManagement = interfaces.some((iface: any) => iface.name === "management");
+
+  if (hasSoc) {
+    addRuleOnce(rules, seen, {
+      interface: "soc",
+      action: "pass",
+      protocol: "tcp",
+      source: "SOC_NET",
+      destination: "OPENCTI_SERVER",
+      destinationPort: "8080",
+      description: "Allow SOC access to OpenCTI web UI"
+    });
+
+    addRuleOnce(rules, seen, {
+      interface: "soc",
+      action: "pass",
+      protocol: "tcp",
+      source: "SOC_NET",
+      destination: "OPENCTI_SERVER",
+      destinationPort: "443",
+      description: "Allow SOC HTTPS access to OpenCTI"
+    });
+  }
 
   if (hasManagement) {
     addRuleOnce(rules, seen, {
@@ -453,6 +565,26 @@ function addCoreZoneRules(
       source: "MANAGEMENT_NET",
       destination: "any",
       description: "Allow MANAGEMENT outbound and administration"
+    });
+
+    addRuleOnce(rules, seen, {
+      interface: "management",
+      action: "pass",
+      protocol: "tcp",
+      source: "MANAGEMENT_NET",
+      destination: "OPENCTI_SERVER",
+      destinationPort: "8080",
+      description: "Allow MANAGEMENT access to OpenCTI web UI"
+    });
+
+    addRuleOnce(rules, seen, {
+      interface: "management",
+      action: "pass",
+      protocol: "tcp",
+      source: "MANAGEMENT_NET",
+      destination: "OPENCTI_SERVER",
+      destinationPort: "443",
+      description: "Allow MANAGEMENT HTTPS access to OpenCTI"
     });
   }
 
@@ -542,6 +674,7 @@ function generateRules(
   const seen = new Set<string>();
 
   addCoreZoneRules(rules, seen, firewallHost);
+  addPfSenseSnmpRules(rules, seen, firewallHost, allHosts);
   addRoleToRoleRules(rules, seen, firewallHost, allHosts);
 
   return rules;
