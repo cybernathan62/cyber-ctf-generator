@@ -1,13 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { NetworkPlan, NetworkPlanHost } from "./type.js";
+import { NetworkPlan, NetworkPlanHost } from "../core/type.js";
 import {
   PfSensePlan,
   PfSenseAlias,
   PfSenseFirewallRule,
   PfSenseNatRule
-} from "./pfsenseTypes.js";
+} from "../core/pfsenseTypes.js";
 
 type SshConfig = {
   hostName: string;

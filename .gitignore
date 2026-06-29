@@ -55,3 +55,11 @@ opensearch_dashboards-kibana.yml
 opensearch_dashboards.yml
 test-kibana.sh
 test-wazuh-auth.sh
+
+
+secrets/
+*.env
+outputs/passbolt-secrets.local.json
+outputs/passbolt.env
+outputs/secrets.json
+outputs/generated-lab/secrets/

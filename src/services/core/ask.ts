@@ -104,7 +104,26 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
   }
 
   if (text.includes("bastion")) {
+    ensureEdgeFirewall(roles);
     pushRoleOnce(roles, "bastion", "simple", "management");
+  }
+
+  if (
+    hasAny(text, [
+      "passbolt",
+      "passbolt_server",
+      "passbolt server",
+      "gestionnaire de mots de passe",
+      "gestionnaire mots de passe",
+      "coffre fort",
+      "coffre-fort",
+      "secrets",
+      "secret manager",
+      "password manager"
+    ])
+  ) {
+    ensureEdgeFirewall(roles);
+    pushRoleOnce(roles, "passbolt_server", "simple", "management");
   }
 
   if (hasAny(text, ["dmz", "reverse proxy", "reverse_proxy", "proxy", "web"])) {

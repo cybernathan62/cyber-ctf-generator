@@ -1,8 +1,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { LabDefinition, NetworkPlanHost } from "./type.js";
-
+import { LabDefinition, NetworkPlanHost } from "../core/type.js";
 function secureRandom(min: number, max: number): number {
   return crypto.randomInt(min, max + 1);
 }
@@ -61,6 +60,7 @@ export function generateNetworkPlanFromDefinition(
   const wantsEdge = Boolean(edgeRole);
   const wantsIdsSensor = roles.some((r) => r.role === "ids_sensor");
   const wantsOpenCti = roles.some((r) => r.role === "opencti_server");
+  const wantsPassbolt = roles.some((r) => r.role === "passbolt_server");
 
   const socRoles = new Set([
     "wazuh_server",
@@ -314,6 +314,25 @@ export function generateNetworkPlanFromDefinition(
     hosts.push({
       id: "bastion-1",
       role: "bastion",
+      variant: "simple",
+      zone: "management",
+      profile: "debian-wazuh",
+      interfaces: [
+        {
+          name: "eth1",
+          network_id: "management-net",
+          ip: ip(labId, managementVlan, randomHost(usedMgmtHosts), 24),
+          gateway: mgmtGw,
+          dns: ["1.1.1.1", "8.8.8.8"]
+        }
+      ]
+    });
+  }
+
+  if (wantsPassbolt) {
+    hosts.push({
+      id: "passbolt-1",
+      role: "passbolt_server",
       variant: "simple",
       zone: "management",
       profile: "debian-wazuh",

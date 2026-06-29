@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ROLE_MAP } from "./roleMap.js";
+import { ROLE_MAP } from "../core/roleMap.js";
 import {
   LabDefinition,
   RequestedRole,
@@ -8,7 +8,7 @@ import {
   GeneratedNic,
   RoleType,
   ZoneType
-} from "./type.js";
+} from "../core/type.js";
 
 type GenerateLabInput = LabDefinition & {
   outputDir: string;
@@ -177,11 +177,14 @@ export class LabGeneratorService {
       case "opencti_server":
         return totalNodes > 1 ? `opencti-${nodeIndex}` : "opencti-1";
 
+      case "passbolt_server":
+        return totalNodes > 1 ? `passbolt-${nodeIndex}` : "passbolt-1";
+
       case "soc_ai_agent":
         return totalNodes > 1 ? `soc-ai-${nodeIndex}` : "soc-ai-1";
-      
+
       case "ids_sensor":
-        return totalNodes > 1 ? `ids-sensor-${nodeIndex}` : "ids-sensor-1-1";
+        return totalNodes > 1 ? `ids-sensor-${nodeIndex}` : "ids-sensor-1";
 
       case "db_server":
         return totalNodes > 1 ? `db-server-${nodeIndex}` : "db-server-1";
@@ -194,15 +197,44 @@ export class LabGeneratorService {
     }
   }
 
+  private findPlanHost(
+    vm: GeneratedInstance,
+    networkPlan: NetworkPlan
+  ): NetworkPlanHost | undefined {
+    const exactHost = networkPlan.hosts.find((h) => h.id === vm.id);
+
+    if (exactHost) {
+      return exactHost;
+    }
+
+    /*
+     * Garde-fou utile pendant l'ajout de nouveaux rôles :
+     * si le network-plan a bien le même rôle mais pas exactement le même id,
+     * on accepte le fallback seulement s'il n'y a qu'un seul hôte de ce rôle.
+     */
+    const sameRoleHosts = networkPlan.hosts.filter((h) => h.role === vm.role);
+
+    if (sameRoleHosts.length === 1) {
+      return sameRoleHosts[0];
+    }
+
+    return undefined;
+  }
+
   private attachNetworksFromPlan(
     instances: GeneratedInstance[],
     networkPlan: NetworkPlan
   ): GeneratedInstance[] {
     for (const vm of instances) {
-      const planHost = networkPlan.hosts.find((h) => h.id === vm.id);
+      const planHost = this.findPlanHost(vm, networkPlan);
 
       if (!planHost) {
-        throw new Error(`Hôte ${vm.id} introuvable dans network-plan.json`);
+        const availableHosts = networkPlan.hosts.map((h) => h.id).join(", ");
+
+        throw new Error(
+          `Hôte ${vm.id} introuvable dans network-plan.json. ` +
+            `Hôtes disponibles: ${availableHosts || "aucun"}`
+        );
       }
 
       vm.nics = (planHost.interfaces ?? []).map((iface): GeneratedNic => ({
@@ -241,12 +273,14 @@ export class LabGeneratorService {
   private resolveCpu(vm: GeneratedInstance): number {
     if (vm.role === "wazuh_server") return 4;
     if (vm.role === "opencti_server") return 4;
+    if (vm.role === "passbolt_server") return 2;
     return 2;
   }
 
   private resolveMemory(vm: GeneratedInstance): number {
     if (vm.role === "wazuh_server") return 4096;
     if (vm.role === "opencti_server") return 8192;
+    if (vm.role === "passbolt_server") return 3072;
     return 2048;
   }
 
@@ -344,6 +378,12 @@ export class LabGeneratorService {
       );
     }
 
+    if (vm.role === "passbolt_server" && ports.gui) {
+      lines.push(
+        `    ${ref}.vm.network "forwarded_port", guest: 443, host: ${ports.gui}, host_ip: "127.0.0.1", auto_correct: true, id: "${vm.id}_web"`
+      );
+    }
+
     return lines.join("\n");
   }
 
@@ -355,6 +395,7 @@ export class LabGeneratorService {
     let debianIndex = 0;
     let wazuhDashboardIndex = 0;
     let openctiWebIndex = 0;
+    let passboltWebIndex = 0;
 
     for (const vm of instances) {
       if (this.isEdgePfSense(vm)) {
@@ -381,7 +422,9 @@ export class LabGeneratorService {
             ? 9443 + wazuhDashboardIndex
             : vm.role === "opencti_server"
               ? 9080 + openctiWebIndex
-              : undefined;
+              : vm.role === "passbolt_server"
+                ? 10443 + passboltWebIndex
+                : undefined;
 
         allocations.set(vm.id, {
           ssh: 2401 + debianIndex,
@@ -394,6 +437,10 @@ export class LabGeneratorService {
 
         if (vm.role === "opencti_server") {
           openctiWebIndex += 1;
+        }
+
+        if (vm.role === "passbolt_server") {
+          passboltWebIndex += 1;
         }
 
         debianIndex += 1;

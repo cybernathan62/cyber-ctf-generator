@@ -1,20 +1,22 @@
+
 {
   "name": "ctf-lab-generator",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx src/services/index.ts",
-    "generate": "tsx src/services/index.ts",
-    "ask": "tsx src/services/ask.ts",
-    "infra": "tsx src/services/infra.ts",
-    "network": "tsx src/services/generateNetworkPlan.ts",
-    "pfsense-plan": "tsx src/services/generatePfSenseConfig.ts",
-    "pfsense-rules": "tsx src/services/generatePfSenseRulesPlan.ts",
-    "pfsense-aliases": "tsx src/services/generatePfSenseAliasesPlan.ts",
-    "pfsense-config-xml": "tsx src/services/generatePfSenseConfigXmlFromTemplate.ts",
+    "dev": "tsx src/services/core/index.ts",
+    "generate": "tsx src/services/core/index.ts",
+    "ask": "tsx src/services/core/ask.ts",
+    "infra": "tsx src/services/core/infra.ts",
+
+    "network": "tsx src/services/network/generateNetworkPlan.ts",
+    "pfsense-rules": "tsx src/services/network/generatePfSenseRules.ts",
+
     "web": "tsx src/web/server.ts",
+
     "build": "tsc --noEmit",
-    "test:pfsense-local": "tsx src/services/testPfsensePatchLocal.ts"
+
+    "test:pfsense-local": "tsx src/services/pfsense/testPfsensePatchLocal.ts"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -36,3 +38,4 @@
     "typescript": "^5.6.3"
   }
 }
+

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { NetworkPlan, NetworkPlanHost } from "./type.js";
+import { NetworkPlan, NetworkPlanHost } from "../core/type.js";
 
 type SshConfig = {
   hostName: string;
@@ -98,6 +98,30 @@ function getVagrantSshConfig(generatedLabDir: string, vmName: string): SshConfig
   };
 }
 
+function resolveVagrantVmName(planHostId: string): string {
+  /*
+    Compatibilité avec les anciens IDs générés dans network-plan.json.
+
+    Le générateur réseau peut encore produire des noms de type:
+    - ids-sensor-1-1
+    - passbolt_server-1-1
+
+    Alors que le Vagrantfile corrigé expose:
+    - ids-sensor-1
+    - passbolt-1
+
+    Cette normalisation évite un échec sur:
+    vagrant ssh-config <ancien-nom>
+  */
+  const aliases: Record<string, string> = {
+    "ids-sensor-1-1": "ids-sensor-1",
+    "passbolt_server-1-1": "passbolt-1",
+    "passbolt-server-1-1": "passbolt-1"
+  };
+
+  return aliases[planHostId] ?? planHostId;
+}
+
 function sshSecurityOptions(): string[] {
   const mode = process.env.SSH_TRUST_MODE ?? "lab";
 
@@ -177,7 +201,7 @@ function assertIpv4(value: string, label: string): void {
 }
 
 function getInternalInterfaces(host: NetworkPlanHost): InternalInterface[] {
-  return host.interfaces.filter((iface: any) => {
+  return (host.interfaces ?? []).filter((iface: any) => {
     return iface.name !== "wan" && iface.ip && iface.mode !== "dhcp";
   }) as InternalInterface[];
 }
@@ -366,7 +390,15 @@ export function patchLiveDebianConfigs(
   const scpCommand = process.platform === "win32" ? "scp.exe" : "scp";
 
   for (const host of debianHosts) {
-    const vmName = host.id;
+    const planHostId = host.id;
+    const vmName = resolveVagrantVmName(planHostId);
+
+    if (vmName !== planHostId) {
+      console.warn(
+        `[Debian patch] Alias VM détecté: ${planHostId} dans network-plan.json -> ${vmName} dans Vagrantfile`
+      );
+    }
+
     const cfg = getVagrantSshConfig(generatedLabDir, vmName);
 
     const gateway = findGatewayForHost(host);

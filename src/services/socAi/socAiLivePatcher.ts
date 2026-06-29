@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { NetworkPlan } from "./type.js";
+import { NetworkPlan } from "../core/type.js";
 
 type WazuhCredentials = {
   wazuh_api_user?: string;

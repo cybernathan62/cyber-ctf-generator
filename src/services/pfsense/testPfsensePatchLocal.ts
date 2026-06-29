@@ -1,9 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { generatePfSenseMinimalPlan } from "./generatePfsenseMinimalPlan.js";
+
+import { generatePfSenseRules } from "../network/generatePfSenseRules.js";
 import { buildPatchedConfigXml } from "./pfsenseLiveConfigPatcher.js";
-import { NetworkPlan, NetworkPlanHost } from "./type.js";
-import { PfSensePlan } from "./pfsenseTypes.js";
+import { NetworkPlan } from "../core/type.js";
+import { PfSensePlan } from "../core/pfsenseTypes.js";
 
 const LOGICAL_INTERFACE_NAMES = new Set([
   "management",
@@ -32,7 +33,7 @@ function main(): void {
     throw new Error(`Fichier manquant: ${networkPlanPath}. Lance d'abord npm run infra.`);
   }
 
-  generatePfSenseMinimalPlan(networkPlanPath, planPath);
+  generatePfSenseRules(networkPlanPath, planPath);
 
   const networkPlan = JSON.parse(
     fs.readFileSync(networkPlanPath, "utf-8")
@@ -106,15 +107,17 @@ function main(): void {
 
   if (errors.length > 0) {
     console.error("[test:pfsense-local] ÉCHEC:\n");
+
     for (const err of errors) {
       console.error(`  - ${err}`);
     }
+
     process.exit(1);
   }
 
   console.log("[test:pfsense-local] Tous les contrôles XML sont passés.");
   console.log(
-    "\nProchaine étape live (VMs déjà up): ré-appliquer le patch SSH depuis infra ou relancer uniquement la phase pfSense."
+    "\nProchaine étape live : ré-appliquer le patch SSH depuis infra ou relancer uniquement la phase pfSense."
   );
 }
 

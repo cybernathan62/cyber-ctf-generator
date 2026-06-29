@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { LabGeneratorService } from "./labGenerator.js";
+import { LabGeneratorService } from "../lab/labGenerator.js";
 import type { LabDefinition } from "./type.js";
 
 function readJsonFile<T>(filePath: string): T {

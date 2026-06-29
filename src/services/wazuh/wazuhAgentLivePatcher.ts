@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { NetworkPlan, NetworkPlanHost } from "./type.js";
+import { NetworkPlan, NetworkPlanHost } from "../core/type.js";
 
 type SshConfig = {
   hostName: string;
@@ -463,8 +463,12 @@ function resolveTargets(outputsDir: string, generatedLabDir: string): AgentTarge
   }
 
   return agentHosts.map((host) => {
-    const vmName = getHostName(host);
-    const ssh = sshAccess[vmName];
+const vmName = getHostName(host)
+  .replace("ids-sensor-1-1", "ids-sensor-1")
+  .replace("passbolt_server-1-1", "passbolt-1")
+  .replace("passbolt-server-1-1", "passbolt-1");
+  
+  const ssh = sshAccess[vmName];
 
     if (!ssh) {
       throw new Error(`[Wazuh agent] SSH config introuvable pour ${vmName} dans ssh-access.local.json`);

@@ -1,21 +1,25 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { LabGeneratorService } from "./labGenerator.js";
-import { generateNetworkPlanFromDefinition } from "./generateNetworkPlan.js";
-import { generatePfSenseMinimalPlan } from "./generatePfsenseMinimalPlan.js";
-import { patchLivePfSenseConfigs } from "./pfsenseLiveConfigPatcher.js";
-import { patchLiveDebianConfigs } from "./debianLiveConfigPatcher.js";
-import { patchLiveWazuhConfigs } from "./wazuhLiveConfigPatcher.production-mode.js";
-import { patchLiveWazuhAgents } from "./wazuhAgentLivePatcher.js";
-import { patchLiveSocAiAgent } from "./socAiLivePatcher.js";
-import { patchLiveSuricataSensor } from "./suricataLivePatcher.js";
-import { patchLiveMariaDB } from "./mariadbLivePatcher.js";
-import { patchLiveZabbix } from "./zabbixLivePatcher.js";
-import { patchLiveZabbixAgents } from "./zabbixAgentLivePatcher.js";
-import { patchLiveZabbixPfSense } from "./zabbixPfsensePatcher.js";
-import { patchLiveOpenCTI } from "./openctiLivePatcher.js";
+
+import { LabGeneratorService } from "../lab/labGenerator.js";
+import { generateNetworkPlanFromDefinition } from "../network/generateNetworkPlan.js";
+import { generatePfSenseRules } from "../network/generatePfSenseRules.js";
+import { patchLivePfSenseConfigs } from "../pfsense/pfsenseLiveConfigPatcher.js";
+import { patchLiveDebianConfigs } from "../debian/debianLiveConfigPatcher.js";
+import { patchLiveWazuhConfigs } from "../wazuh/wazuhLiveConfigPatcher.production-mode.js";
+import { patchLiveWazuhAgents } from "../wazuh/wazuhAgentLivePatcher.js";
+import { patchLiveSocAiAgent } from "../socAi/socAiLivePatcher.js";
+import { patchLiveSuricataSensor } from "../suricata/suricataLivePatcher.js";
+import { patchLiveMariaDB } from "../mariadb/mariadbLivePatcher.js";
+import { patchLiveZabbix } from "../zabbix/zabbixLivePatcher.js";
+import { patchLiveZabbixAgents } from "../zabbix/zabbixAgentLivePatcher.js";
+import { patchLiveZabbixPfSense } from "../zabbix/zabbixPfsensePatcher.js";
+import { patchLiveOpenCTI } from "../opencti/openctiLivePatcher.js";
+import { patchLiveOpenCTIConnectors } from "../opencti/openctiConnectorPatcher.js";
+import { patchLivePassbolt } from "../passbolt/passboltLivePatcher.js";
 import { validateLabWithPolicies } from "./policyEngine.js";
+
 import {
   LabDefinition,
   RequestedRole,
@@ -23,6 +27,17 @@ import {
   RoleVariant,
   ZoneType
 } from "./type.js";
+
+const ONE_SECOND_MS = 1000;
+const ONE_MINUTE_MS = 60 * ONE_SECOND_MS;
+
+const VAGRANT_UP_TIMEOUT_MS = 3 * 60 * ONE_MINUTE_MS; // 3h pour gros lab
+const VAGRANT_STATUS_TIMEOUT_MS = 2 * ONE_MINUTE_MS;
+const SINGLE_SSH_TEST_TIMEOUT_MS = 60 * ONE_SECOND_MS;
+
+const DEFAULT_VM_SSH_TIMEOUT_SECONDS = 45 * 60; // 45 min
+const LONG_VM_SSH_TIMEOUT_SECONDS = 60 * 60; // 1h
+const DEBIAN_BOOT_SSH_TIMEOUT_SECONDS = 45 * 60; // 45 min
 
 function parseNumericCount(text: string, keyword: string): number | null {
   const regex = new RegExp(`(\\d+)\\s*${keyword}`, "i");
@@ -143,22 +158,22 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
   ]);
 
   const wantsSocFirewall = hasAny(text, [
-  "pfsense interne",
-  "firewall interne",
-  "pare-feu interne",
-  "pfsense interne soc",
-  "firewall interne soc",
-  "firewall soc",
-  "pfsense soc",
-  "pfsense interne avec wazuh",
-  "pfsense interne avec zabbix",
-  "pfsense interne avec opencti",
-  "pfsense interne avec open cti",
-  "pfsense interne avec open_cti",
-  "pfsense interne avec cti",
-  "pfsense interne avec suricata",
-  "pfsense interne avec supervision"
-]);
+    "pfsense interne",
+    "firewall interne",
+    "pare-feu interne",
+    "pfsense interne soc",
+    "firewall interne soc",
+    "firewall soc",
+    "pfsense soc",
+    "pfsense interne avec wazuh",
+    "pfsense interne avec zabbix",
+    "pfsense interne avec opencti",
+    "pfsense interne avec open cti",
+    "pfsense interne avec open_cti",
+    "pfsense interne avec cti",
+    "pfsense interne avec suricata",
+    "pfsense interne avec supervision"
+  ]);
 
   const wantsDataFirewall = hasAny(text, [
     "pfsense data",
@@ -200,6 +215,19 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
     pushRoleOnce(roles, "bastion", "simple", "management", 1, 1);
   }
 
+  if (
+    hasAny(text, [
+      "passbolt",
+      "coffre fort",
+      "coffre-fort",
+      "password vault",
+      "gestionnaire de mots de passe",
+      "vault"
+    ])
+  ) {
+    pushRoleOnce(roles, "passbolt_server", "simple", "management", 1, 1);
+  }
+
   if (hasAny(text, ["dmz", "reverse proxy", "reverse_proxy", "proxy", "web"])) {
     pushRoleOnce(roles, "reverse_proxy", "simple", "dmz", 1, 1);
   }
@@ -236,7 +264,16 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
     pushRoleOnce(roles, "soc_ai_agent", "simple", "soc", 1, 1);
   }
 
-  if (hasAny(text, ["suricata", "ids", "ids sensor", "sonde ids", "sonde suricata", "nids"])) {
+  if (
+    hasAny(text, [
+      "suricata",
+      "ids",
+      "ids sensor",
+      "sonde ids",
+      "sonde suricata",
+      "nids"
+    ])
+  ) {
     pushRoleOnce(roles, "ids_sensor", "simple", "soc", 1, 1);
   }
 
@@ -250,37 +287,45 @@ function detectRolesFromPrompt(input: string): RequestedRole[] {
 function waitSeconds(seconds: number): void {
   console.log(`\nAttente ${seconds}s...\n`);
 
-  const command = process.platform === "win32" ? "timeout.exe" : "sleep";
-  const args =
-    process.platform === "win32"
-      ? ["/T", String(seconds), "/NOBREAK"]
-      : [String(seconds)];
+  const buffer = new SharedArrayBuffer(4);
+  const view = new Int32Array(buffer);
 
-  const result = spawnSync(command, args, {
-    stdio: "inherit",
-    shell: false
-  });
+  Atomics.wait(view, 0, 0, seconds * ONE_SECOND_MS);
+}
 
-  if (result.error) {
-    throw result.error;
-  }
+function vagrantCommand(): string {
+  return process.platform === "win32" ? "vagrant.exe" : "vagrant";
 }
 
 function vagrantExists(vmName: string, generatedLabDir: string): boolean {
-  const command = process.platform === "win32" ? "vagrant.exe" : "vagrant";
-
-  const result = spawnSync(command, ["status", vmName], {
+  const result = spawnSync(vagrantCommand(), ["status", vmName], {
     cwd: generatedLabDir,
     encoding: "utf-8",
-    shell: false
+    shell: false,
+    timeout: VAGRANT_STATUS_TIMEOUT_MS
   });
 
-  return result.status === 0 && !result.stdout.includes("The machine with the name");
+  const stdout = result.stdout ?? "";
+
+  if (result.error) {
+    const message =
+      result.error instanceof Error ? result.error.message : String(result.error);
+
+    console.warn(`[infra] vagrant status ${vmName} non fiable: ${message}`);
+    return false;
+  }
+
+  return (
+    result.status === 0 &&
+    !stdout.includes("The machine with the name")
+  );
 }
 
-function waitForVmSsh(vmName: string, generatedLabDir: string, timeoutSeconds = 300): void {
-  const command = process.platform === "win32" ? "vagrant.exe" : "vagrant";
-
+function waitForVmSsh(
+  vmName: string,
+  generatedLabDir: string,
+  timeoutSeconds = DEFAULT_VM_SSH_TIMEOUT_SECONDS
+): void {
   if (!vagrantExists(vmName, generatedLabDir)) {
     console.log(`[infra] VM absente, skip wait SSH: ${vmName}`);
     return;
@@ -288,19 +333,32 @@ function waitForVmSsh(vmName: string, generatedLabDir: string, timeoutSeconds = 
 
   const startedAt = Date.now();
 
-  while ((Date.now() - startedAt) / 1000 < timeoutSeconds) {
+  while ((Date.now() - startedAt) / ONE_SECOND_MS < timeoutSeconds) {
     console.log(`[infra] Test SSH ${vmName}...`);
 
-    const result = spawnSync(command, ["ssh", "-c", "echo ready", vmName], {
-      cwd: generatedLabDir,
-      encoding: "utf-8",
-      shell: false,
-      timeout: 30000
-    });
+    const result = spawnSync(
+      vagrantCommand(),
+      ["ssh", "-c", "echo ready", vmName],
+      {
+        cwd: generatedLabDir,
+        encoding: "utf-8",
+        shell: false,
+        timeout: SINGLE_SSH_TEST_TIMEOUT_MS
+      }
+    );
 
-    if (result.status === 0 && result.stdout.includes("ready")) {
+    if (result.status === 0 && result.stdout?.includes("ready")) {
       console.log(`[infra] SSH OK pour ${vmName}`);
       return;
+    }
+
+    if (result.error) {
+      const message =
+        result.error instanceof Error
+          ? result.error.message
+          : String(result.error);
+
+      console.warn(`[infra] SSH pas encore prêt pour ${vmName}: ${message}`);
     }
 
     if (result.stdout) console.warn(result.stdout.trim());
@@ -315,6 +373,7 @@ function waitForVmSsh(vmName: string, generatedLabDir: string, timeoutSeconds = 
 function waitForDebianSsh(generatedLabDir: string): void {
   const debianVms = [
     "bastion-1",
+    "passbolt-1",
     "reverse-proxy-1",
     "db-server-1",
     "db-server",
@@ -326,7 +385,11 @@ function waitForDebianSsh(generatedLabDir: string): void {
   ];
 
   for (const vmName of debianVms) {
-    waitForVmSsh(vmName, generatedLabDir, 900);
+    waitForVmSsh(
+      vmName,
+      generatedLabDir,
+      DEBIAN_BOOT_SSH_TIMEOUT_SECONDS
+    );
   }
 }
 
@@ -348,7 +411,7 @@ function main(): void {
 
   if (!userPrompt) {
     throw new Error(
-      'Exemple: npm run infra -- "je veux un pfsense edge avec une dmz, un bastion, wazuh, zabbix, une db et une sonde suricata"'
+      'Exemple: npm run infra -- "je veux un pfsense edge avec une dmz, un bastion, passbolt, wazuh, zabbix, une db et une sonde suricata"'
     );
   }
 
@@ -368,7 +431,7 @@ function main(): void {
   const networkPlanFile = path.join(outputRoot, "network-plan.json");
 
   const generatedLabDir = path.join(outputRoot, "generated-lab");
-  const pfSensePlanFile = path.join(outputRoot, "pfsense-plan.json");
+  const pfSenseRulesFile = path.join(outputRoot, "pfsense-rules.json");
   const patchedPfSenseDir = path.join(outputRoot, "pfsense-live-patched");
   const patchedDebianDir = path.join(outputRoot, "debian-live-patched");
 
@@ -413,13 +476,13 @@ function main(): void {
 
   console.log("Network plan généré :", networkPlanFile);
 
-  generatePfSenseMinimalPlan(networkPlanFile, pfSensePlanFile);
+  generatePfSenseRules(networkPlanFile, pfSenseRulesFile);
 
-  if (!fs.existsSync(pfSensePlanFile)) {
-    throw new Error(`[infra] pfsense-plan.json non généré: ${pfSensePlanFile}`);
+  if (!fs.existsSync(pfSenseRulesFile)) {
+    throw new Error(`[infra] pfsense-rules.json non généré: ${pfSenseRulesFile}`);
   }
 
-  console.log("pfSense minimal plan généré :", pfSensePlanFile);
+  console.log("pfSense rules générées :", pfSenseRulesFile);
 
   const generator = new LabGeneratorService();
 
@@ -433,13 +496,11 @@ function main(): void {
 
   console.log("\nLancement de 'vagrant up'...\n");
 
-  const command = process.platform === "win32" ? "vagrant.exe" : "vagrant";
-
-  const upResult = spawnSync(command, ["up"], {
+  const upResult = spawnSync(vagrantCommand(), ["up"], {
     cwd: generatedLabDir,
     stdio: "inherit",
     shell: false,
-    timeout: 60 * 60 * 1000
+    timeout: VAGRANT_UP_TIMEOUT_MS
   });
 
   if (upResult.error) {
@@ -455,7 +516,7 @@ function main(): void {
   patchLivePfSenseConfigs(
     generatedLabDir,
     networkPlanFile,
-    pfSensePlanFile,
+    pfSenseRulesFile,
     patchedPfSenseDir
   );
 
@@ -472,7 +533,12 @@ function main(): void {
   waitSeconds(30);
 
   if (vagrantExists("wazuh-1", generatedLabDir)) {
-    waitForVmSsh("wazuh-1", generatedLabDir, 900);
+    waitForVmSsh(
+      "wazuh-1",
+      generatedLabDir,
+      DEFAULT_VM_SSH_TIMEOUT_SECONDS
+    );
+
     patchLiveWazuhConfigs(outputRoot);
 
     waitSeconds(10);
@@ -485,16 +551,32 @@ function main(): void {
 
   waitSeconds(10);
 
-  if (vagrantExists("db-server-1", generatedLabDir) || vagrantExists("db-server", generatedLabDir)) {
-    const dbVmName = vagrantExists("db-server-1", generatedLabDir) ? "db-server-1" : "db-server";
-    waitForVmSsh(dbVmName, generatedLabDir, 900);
+  if (
+    vagrantExists("db-server-1", generatedLabDir) ||
+    vagrantExists("db-server", generatedLabDir)
+  ) {
+    const dbVmName = vagrantExists("db-server-1", generatedLabDir)
+      ? "db-server-1"
+      : "db-server";
+
+    waitForVmSsh(
+      dbVmName,
+      generatedLabDir,
+      DEFAULT_VM_SSH_TIMEOUT_SECONDS
+    );
+
     patchLiveMariaDB(outputRoot);
   } else {
     console.log("[infra] Aucun serveur MariaDB déployé, skip.");
   }
 
   if (vagrantExists("zabbix-1", generatedLabDir)) {
-    waitForVmSsh("zabbix-1", generatedLabDir, 900);
+    waitForVmSsh(
+      "zabbix-1",
+      generatedLabDir,
+      DEFAULT_VM_SSH_TIMEOUT_SECONDS
+    );
+
     patchLiveZabbix(outputRoot);
 
     waitSeconds(10);
@@ -505,14 +587,22 @@ function main(): void {
   }
 
   if (vagrantExists("opencti-1", generatedLabDir)) {
-    waitForVmSsh("opencti-1", generatedLabDir, 1800);
+    waitForVmSsh(
+      "opencti-1",
+      generatedLabDir,
+      LONG_VM_SSH_TIMEOUT_SECONDS
+    );
 
     try {
       patchLiveOpenCTI(outputRoot);
 
       waitSeconds(30);
 
-      console.log("[infra] OpenCTI configuré.");
+      patchLiveOpenCTIConnectors(outputRoot);
+
+      waitSeconds(15);
+
+      console.log("[infra] OpenCTI + Connecteurs configurés.");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[infra] OpenCTI non appliqué: ${message}`);
@@ -521,8 +611,33 @@ function main(): void {
     console.log("[infra] Aucun OpenCTI déployé, skip.");
   }
 
+  if (vagrantExists("passbolt-1", generatedLabDir)) {
+    waitForVmSsh(
+      "passbolt-1",
+      generatedLabDir,
+      LONG_VM_SSH_TIMEOUT_SECONDS
+    );
+
+    try {
+      patchLivePassbolt(outputRoot);
+
+      waitSeconds(30);
+
+      console.log("[infra] Passbolt configuré.");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[infra] Passbolt non appliqué: ${message}`);
+    }
+  } else {
+    console.log("[infra] Aucun Passbolt déployé, skip.");
+  }
+
   if (vagrantExists("soc-ai-1", generatedLabDir)) {
-    waitForVmSsh("soc-ai-1", generatedLabDir, 900);
+    waitForVmSsh(
+      "soc-ai-1",
+      generatedLabDir,
+      DEFAULT_VM_SSH_TIMEOUT_SECONDS
+    );
 
     try {
       patchLiveSocAiAgent(outputRoot);
@@ -540,7 +655,12 @@ function main(): void {
   }
 
   if (vagrantExists("ids-sensor-1-1", generatedLabDir)) {
-    waitForVmSsh("ids-sensor-1-1", generatedLabDir, 900);
+    waitForVmSsh(
+      "ids-sensor-1-1",
+      generatedLabDir,
+      DEFAULT_VM_SSH_TIMEOUT_SECONDS
+    );
+
     patchLiveSuricataSensor(outputRoot);
   } else {
     console.log("[infra] Aucun IDS Suricata déployé, skip.");
@@ -557,7 +677,9 @@ function main(): void {
     console.log("[infra] Aucun Zabbix déployé, skip pfSense dans Zabbix.");
   }
 
-  console.log("\nInfra complète déployée : pfSense + Debian + Wazuh + agents + MariaDB + Zabbix + OpenCTI + SOC AI/IDS si demandés.");
+  console.log(
+    "\nInfra complète déployée : pfSense + Debian + Wazuh + agents + MariaDB + Zabbix + OpenCTI + Passbolt + SOC AI/IDS si demandés."
+  );
 }
 
 main();
