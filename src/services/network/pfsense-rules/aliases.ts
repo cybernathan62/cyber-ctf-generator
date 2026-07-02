@@ -1,11 +1,13 @@
 import type { NetworkPlanHost } from "../../core/type.js";
-
 import type { PfSenseAlias } from "../../core/pfsenseTypes.js";
 
 import {
   DB_ROLES,
   OPENCTI_ROLES,
+  OPENSEARCH_ROLES,
   PASSBOLT_ROLES,
+  RABBITMQ_ROLES,
+  REDIS_ROLES,
   WAZUH_AGENT_ROLES,
   ZABBIX_AGENT_ROLES
 } from "../../core/roles.js";
@@ -48,6 +50,33 @@ function addServiceAliases(
     "OPENCTI_SERVER",
     OPENCTI_ROLES,
     "OpenCTI server"
+  );
+
+  addHostAliasByRoles(
+    aliases,
+    seen,
+    allHosts,
+    "OPENSEARCH_SERVER",
+    OPENSEARCH_ROLES,
+    "OpenSearch server used by OpenCTI"
+  );
+
+  addHostAliasByRoles(
+    aliases,
+    seen,
+    allHosts,
+    "RABBITMQ_SERVER",
+    RABBITMQ_ROLES,
+    "RabbitMQ broker used by OpenCTI"
+  );
+
+  addHostAliasByRoles(
+    aliases,
+    seen,
+    allHosts,
+    "REDIS_SERVER",
+    REDIS_ROLES,
+    "Redis cache used by OpenCTI"
   );
 
   addHostAliasByRoles(

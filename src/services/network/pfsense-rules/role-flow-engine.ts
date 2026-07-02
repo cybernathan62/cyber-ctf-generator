@@ -1,8 +1,6 @@
 import type { NetworkPlanHost } from "../../core/type.js";
-
 import type { PfSenseFirewallRule } from "../../core/pfsenseTypes.js";
-
-import type { Protocol, RoleFlow } from "../../core/roles.js";
+import type { Protocol, RoleFlow, RoleSelector } from "../../core/roles.js";
 
 import { ALL_ROLE_FLOWS } from "./index.js";
 
@@ -13,6 +11,14 @@ import {
 } from "./helpers.js";
 
 const ROLE_FLOWS: RoleFlow[] = ALL_ROLE_FLOWS;
+
+function hasAnySelector(roles: readonly RoleSelector[]): boolean {
+  return roles.includes("any");
+}
+
+function withoutAnySelector(roles: readonly RoleSelector[]): RoleSelector[] {
+  return roles.filter((role) => role !== "any");
+}
 
 function addRuleOnEveryNonWanInterface(
   rules: PfSenseFirewallRule[],
@@ -61,11 +67,22 @@ export function addRoleToRoleRules(
   allHosts: NetworkPlanHost[]
 ): void {
   for (const flow of ROLE_FLOWS) {
-    if (flow.toRoles.includes("any")) {
-      const sources = findHostsByRoles(allHosts, flow.fromRoles);
+    const sourceRoles = withoutAnySelector(flow.fromRoles);
+    const destinationRoles = withoutAnySelector(flow.toRoles);
 
-      if (sources.length === 0) continue;
+    const sourceIsAny = hasAnySelector(flow.fromRoles);
+    const destinationIsAny = hasAnySelector(flow.toRoles);
 
+    if (sourceIsAny) {
+      throw new Error(
+        `[pfSense role-flow] Invalid flow "${flow.description}": "any" is not allowed in fromRoles. Use explicit source roles.`
+      );
+    }
+
+    const sources = findHostsByRoles(allHosts, sourceRoles);
+    if (sources.length === 0) continue;
+
+    if (destinationIsAny) {
       for (const sourceHost of sources) {
         const sourceIp = firstIp(sourceHost);
         if (!sourceIp) continue;
@@ -85,10 +102,8 @@ export function addRoleToRoleRules(
       continue;
     }
 
-    const sources = findHostsByRoles(allHosts, flow.fromRoles);
-    const destinations = findHostsByRoles(allHosts, flow.toRoles);
-
-    if (sources.length === 0 || destinations.length === 0) continue;
+    const destinations = findHostsByRoles(allHosts, destinationRoles);
+    if (destinations.length === 0) continue;
 
     for (const sourceHost of sources) {
       const sourceIp = firstIp(sourceHost);
