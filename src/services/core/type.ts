@@ -1,28 +1,39 @@
-export type RoleType =
-  | "edge_firewall"
-  | "internal_firewall"
-  | "bastion"
-  | "reverse_proxy"
-  | "wazuh_server"
-  | "zabbix_server"
-  | "opencti_server"
-  | "passbolt_server"
-  | "soc_ai_agent"
-  | "ids_sensor"
-  | "db_server"
-  | "windows_server";
+export const ROLE_TYPES = [
+  "edge_firewall",
+  "internal_firewall",
+  "bastion",
+  "reverse_proxy",
+  "wazuh_server",
+  "zabbix_server",
+  "opencti_server",
+  "passbolt_server",
+  "soc_ai_agent",
+  "ids_sensor",
+  "db_server",
+  "opensearch_server",
+  "rabbitmq_server",
+  "redis_server",
+  "windows_server"
+] as const;
 
-export type RoleVariant = "simple" | "ha" | "cluster";
+export type RoleType = (typeof ROLE_TYPES)[number];
 
-export type ZoneType =
-  | "edge"
-  | "management"
-  | "dmz"
-  | "soc"
-  | "data"
-  | "ad"
-  | "transit"
-  | "sync";
+export const ROLE_VARIANTS = ["simple", "ha", "cluster"] as const;
+
+export type RoleVariant = (typeof ROLE_VARIANTS)[number];
+
+export const ZONE_TYPES = [
+  "edge",
+  "management",
+  "dmz",
+  "soc",
+  "data",
+  "ad",
+  "transit",
+  "sync"
+] as const;
+
+export type ZoneType = (typeof ZONE_TYPES)[number];
 
 export type RequestedRole = {
   role: RoleType;
@@ -86,7 +97,7 @@ export type NetworkPlanZoneDefinition = {
   vlan_id: number;
   cidr: string;
   gateway: string;
-  zone_type: ZoneType | "transit";
+  zone_type: ZoneType;
 };
 
 export type NetworkPlan = {

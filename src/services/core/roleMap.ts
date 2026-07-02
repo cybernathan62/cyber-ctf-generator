@@ -1,14 +1,14 @@
-import { RoleType } from "./type.js";
+import type { RoleType, RoleVariant, ZoneType } from "./type.js";
+import { ROLE_TYPES, ROLE_VARIANTS, ZONE_TYPES } from "./type.js";
 
-export const ROLE_MAP: Record<
-  RoleType,
-  {
-    naming: string;
-    profile: string;
-    default_zone: string;
-    default_variant: string;
-  }
-> = {
+export type RoleDefinition = {
+  naming: string;
+  profile: string;
+  default_zone: ZoneType;
+  default_variant: RoleVariant;
+};
+
+export const ROLE_MAP = {
   edge_firewall: {
     naming: "pfsense-edge",
     profile: "pfsense",
@@ -44,20 +44,6 @@ export const ROLE_MAP: Record<
     default_variant: "simple"
   },
 
-  soc_ai_agent: {
-    naming: "soc-ai",
-    profile: "debian-wazuh",
-    default_zone: "soc",
-    default_variant: "simple"
-  },
-
-  ids_sensor: {
-    naming: "suricata",
-    profile: "debian-wazuh",
-    default_zone: "soc",
-    default_variant: "simple"
-  },
-
   zabbix_server: {
     naming: "zabbix",
     profile: "debian-wazuh",
@@ -79,10 +65,45 @@ export const ROLE_MAP: Record<
     default_variant: "simple"
   },
 
+  soc_ai_agent: {
+    naming: "soc-ai",
+    profile: "debian-wazuh",
+    default_zone: "soc",
+    default_variant: "simple"
+  },
+
+  ids_sensor: {
+    naming: "suricata",
+    profile: "debian-wazuh",
+    default_zone: "soc",
+    default_variant: "simple"
+  },
+
   db_server: {
     naming: "db-server",
     profile: "debian-wazuh",
     default_zone: "data",
+    default_variant: "simple"
+  },
+
+  opensearch_server: {
+    naming: "opensearch",
+    profile: "debian-wazuh",
+    default_zone: "soc",
+    default_variant: "simple"
+  },
+
+  rabbitmq_server: {
+    naming: "rabbitmq",
+    profile: "debian-wazuh",
+    default_zone: "soc",
+    default_variant: "simple"
+  },
+
+  redis_server: {
+    naming: "redis",
+    profile: "debian-wazuh",
+    default_zone: "soc",
     default_variant: "simple"
   },
 
@@ -92,4 +113,22 @@ export const ROLE_MAP: Record<
     default_zone: "ad",
     default_variant: "simple"
   }
-};
+} satisfies Record<RoleType, RoleDefinition>;
+
+export function isValidRole(value: string): value is RoleType {
+  return (ROLE_TYPES as readonly string[]).includes(value);
+}
+
+export function isValidZone(value: string): value is ZoneType {
+  return (ZONE_TYPES as readonly string[]).includes(value);
+}
+
+export function isValidVariant(value: string): value is RoleVariant {
+  return (ROLE_VARIANTS as readonly string[]).includes(value);
+}
+
+export function getRoleDefinition(role: RoleType): RoleDefinition {
+  return ROLE_MAP[role];
+}
+
+export { ROLE_TYPES, ROLE_VARIANTS, ZONE_TYPES };
